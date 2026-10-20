@@ -11,6 +11,14 @@ export const ANALYSIS_WIDTH = 480;   // lebar gambar analisis (piksel)
 export const ASPECT = 1400 / 2000;    // lebar/tinggi bingkai 4 kotak sudut LJK
 
 export const WEIGHTS = { tajam: 30, terang: 25, silau: 20, bayangan: 15, stabil: 10 };
+// Ketajaman = variansi Laplacian / kontras^2 pada potongan kertas yang diskalakan ke ukuran baku
+// (lebar antar-sudut 900 px) dengan pengecilan bertahap, sehingga tidak tertipu aliasing dan
+// sebanding antar HP. Dikalibrasi dari foto asli: tajam ~315-360, foto buram yang lolos dulu ~28.
+// Kamera live (video) sedikit lebih lembut dari foto, jadi ambangnya lebih longgar.
+export const SHARP = {
+  live: { min: 25, bagus: 80 },
+  foto: { min: 40, bagus: 120 },
+};
 // Ambang (dikalibrasi dari foto LJK asli di lebar 480 px)
 export const LIMITS = {
   terangMin: 70, terangBagus: 130, terangLebih: 248,     // tingkat kertas (persentil 75 luminans)
@@ -292,23 +300,80 @@ export function analyze(img, prev = null) {
     lurus: !!q && miring < LIMITS.miringMax,
     sejajar: !!q && perspektif < LIMITS.perspektifMax,
   };
-  let score = 0;
-  for (const k in WEIGHTS) score += WEIGHTS[k] * sub[k];
-  if (!gates.sudut) score = Math.min(score * 0.45, 40);
-  else if (!Object.values(gates).every(Boolean)) score = Math.min(score * 0.6, 59);
-  score = Math.round(score);
-
-  const tip = pickTip(gates, sub, terang);
-  return {
-    score, gates, sub, tip,
-    ready: Object.values(gates).every(Boolean) && score >= 90,
+  return finish({
+    gates, sub,
     corners: q ? { tl: q.tl, tr: q.tr, bl: q.bl, br: q.br } : null,
     size: { w, h },
     metrics: {
       terang: Math.round(terang), tajam: Math.round(tajam), silau: +silau.toFixed(2), bayangan: +bayangan.toFixed(2),
       luas: +luas.toFixed(2), miring: +miring.toFixed(1), perspektif: +perspektif.toFixed(2), geser: +geser.toFixed(4),
     },
-  };
+  });
+}
+
+/** Hitung skor, saran, dan status siap dari syarat wajib + nilai tambahan. */
+function finish(r) {
+  let score = 0;
+  for (const k in WEIGHTS) score += WEIGHTS[k] * r.sub[k];
+  if (!r.gates.sudut) score = Math.min(score * 0.45, 40);
+  else if (!Object.values(r.gates).every(Boolean)) score = Math.min(score * 0.6, 59);
+  r.score = Math.round(score);
+  r.tip = pickTip(r.gates, r.sub, r.metrics.terang);
+  // siap hanya bila semua syarat wajib terpenuhi DAN fokus cukup (buram tidak boleh lolos walau nilai lain bagus)
+  r.ready = Object.values(r.gates).every(Boolean) && r.score >= 90 && r.sub.tajam >= 0.6;
+  return r;
+}
+
+/** Ambil potongan sumber (sx, sy, sw, sh) ke ukuran tw x th dengan pengecilan bertahap (tanpa aliasing). */
+function cropScaled(source, sx, sy, sw, sh, tw, th) {
+  const mk = (w, h) => { const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
+  let cur = mk(sw, sh);
+  let ctx = cur.getContext("2d");
+  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, cur.width, cur.height);
+  while (cur.width / 2 > tw) {
+    const nx = mk(cur.width / 2, cur.height / 2);
+    const c2 = nx.getContext("2d");
+    c2.imageSmoothingQuality = "high";
+    c2.drawImage(cur, 0, 0, nx.width, nx.height);
+    cur = nx;
+  }
+  const out = mk(tw, th);
+  const c3 = out.getContext("2d", { willReadFrequently: true });
+  c3.imageSmoothingQuality = "high";
+  c3.drawImage(cur, 0, 0, tw, th);
+  return c3.getImageData(0, 0, tw, th);
+}
+
+/**
+ * Ukur ketajaman pada skala kertas baku dari sumber resolusi penuh (video atau foto) lalu
+ * perbarui skor. mode: "live" (kamera) atau "foto" (hasil jepretan, ambang lebih ketat).
+ */
+export function measureSharpness(source, r, mode = "live") {
+  if (!r.corners) return r;
+  const srcW = source.videoWidth || source.naturalWidth || source.width;
+  const srcH = source.videoHeight || source.naturalHeight || source.height;
+  const k = srcW / r.size.w, c = r.corners;
+  const lebar = ((dist(c.tl, c.tr) + dist(c.bl, c.br)) / 2) * k;          // lebar antar-sudut (px sumber)
+  const scale = Math.min(1, 900 / Math.max(lebar, 1));
+  const T = 320, side = T / scale;
+  const cx = ((c.tl.x + c.tr.x + c.bl.x + c.br.x) / 4) * k, cy = ((c.tl.y + c.tr.y + c.bl.y + c.br.y) / 4) * k;
+  const sx = Math.max(0, Math.min(srcW - side, cx - side / 2)), sy = Math.max(0, Math.min(srcH - side, cy - side / 2));
+  const img = cropScaled(source, sx, sy, Math.min(side, srcW), Math.min(side, srcH), T, T);
+  const d = img.data, n = T * T, lum = new Float32Array(n), hist = new Uint32Array(256);
+  for (let i = 0, j = 0; i < n; i++, j += 4) { const v = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8; lum[i] = v; hist[v]++; }
+  const rng = Math.max(percentile(hist, n, 0.95) - percentile(hist, n, 0.05), 1);
+  let s1 = 0, s2 = 0, m = 0;
+  for (let y = 1; y < T - 1; y++) for (let x = 1; x < T - 1; x++) {
+    const i = y * T + x;
+    const lap = lum[i - 1] + lum[i + 1] + lum[i - T] + lum[i + T] - 4 * lum[i];
+    s1 += lap; s2 += lap * lap; m++;
+  }
+  const v = (s2 / m - (s1 / m) ** 2) / (rng * rng) * 1000;
+  const lim = SHARP[mode] || SHARP.live;
+  r.metrics.tajam = Math.round(v);
+  r.metrics.tajam_mode = mode;
+  r.sub.tajam = ramp(v, lim.min, lim.bagus);
+  return finish(r);
 }
 
 function pickTip(g, s, terang) {
@@ -322,8 +387,9 @@ function pickTip(g, s, terang) {
   if (!g.jarak) return { key: "jarak", title: "Kertas terlalu jauh", text: "Dekatkan HP sampai kertas memenuhi bingkai." };
   if (!g.lurus) return { key: "lurus", title: "Kertas miring", text: "Putar HP sampai tepi kertas lurus dengan bingkai." };
   if (!g.sejajar) return { key: "sejajar", title: "HP tidak sejajar", text: "Pegang HP sejajar tepat di atas kertas, jangan dari samping." };
-  if (s.tajam < 0.6) return { key: "tajam", title: "Gambar buram", text: "Tahan HP tetap diam, ketuk layar untuk fokus." };
+  // silau dicek dulu: kilap menurunkan kontras sehingga ketajaman ikut terbaca rendah
   if (s.silau < 0.6) return { key: "silau", title: "Ada pantulan cahaya", text: "Ubah sudut HP atau lampu supaya tidak ada kilap di kertas." };
+  if (s.tajam < 0.6) return { key: "tajam", title: "Gambar buram", text: "Tahan HP tetap diam, ketuk layar untuk fokus." };
   if (s.bayangan < 0.6) return { key: "bayangan", title: "Ada bayangan", text: "Hindari bayangan tangan atau HP di atas kertas." };
   if (s.terang < 0.8) return { key: "terang", title: "Agak gelap", text: "Cahaya sedikit kurang; tambah penerangan bila bisa." };
   if (s.stabil < 0.6) return { key: "stabil", title: "Tahan HP", text: "Tahan sebentar tanpa bergerak." };

@@ -81,6 +81,10 @@ def upload(lokasi_id: int = Form(...), bidang_id: int = Form(...), skor_kualitas
     foto_path.write_bytes(data)
 
     rec, kualitas, yakin = reading.read_sheet(foto_path, DATA_DIR / "hasil" / f"k{kid}", bidang.jumlah_soal)
+    masalah = reading.photo_problem(rec, kualitas)
+    if masalah:                      # foto terbaca tapi terlalu buruk: tolak, minta foto ulang
+        rec = {**rec, "error": masalah}
+        yakin = 0
     lb = M.Lembar(kompetisi_id=kid, lokasi_id=lokasi_id, bidang_id=bidang_id, uploader_id=user.id,
                   foto_path=str(foto_path), foto_hash=digest, foto_ukuran=kualitas.get("ukuran", ""),
                   skor_kualitas=max(0, min(100, skor_kualitas)), metrik=metrik_d, kualitas_server=kualitas,

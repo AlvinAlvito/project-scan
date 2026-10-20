@@ -1,7 +1,7 @@
 // Web HP admin daerah: pilih kompetisi -> kamera dengan pemandu kualitas -> kirim -> konfirmasi hasil baca.
 import { api, esc, fileUrl, icon, logout, modal, pctBadge, requireLogin, statusBadge, toast,
   toggleTheme, currentTheme, confirmBox, fmtDate } from "/static/js/common.js";
-import { analyze, grab, CHIPS, chipState } from "./quality.js";
+import { analyze, grab, measureSharpness, CHIPS, chipState } from "./quality.js";
 import { queue, flush } from "./queue.js";
 
 const $ = s => document.querySelector(s);
@@ -114,7 +114,7 @@ function tick() {
   if (state.busy || !video.videoWidth) return;
   const img = grab(video, work);
   if (!img) return;
-  const r = analyze(img, state.prev);
+  const r = measureSharpness(video, analyze(img, state.prev), "live");
   state.prev = r;
   state.smooth = state.smooth ? Math.round(state.smooth * 0.55 + r.score * 0.45) : r.score;
   renderGuide(r);
@@ -186,9 +186,10 @@ async function captureBlob() {
   return new Promise(res => c.toBlob(res, "image/jpeg", 0.95));
 }
 
+/** Nilai foto (hasil jepretan / galeri) dengan ambang ketajaman ketat untuk foto. */
 async function analyzeBlob(blob) {
   const bmp = await createImageBitmap(blob);
-  const r = analyze(grab(bmp, work));
+  const r = measureSharpness(bmp, analyze(grab(bmp, work)), "foto");
   bmp.close && bmp.close();
   return r;
 }
@@ -200,8 +201,17 @@ async function takePhoto(liveResult) {
   const fl = document.createElement("div"); fl.className = "flash"; $("#v-kamera").append(fl); setTimeout(() => fl.remove(), 400);
   try {
     const blob = await captureBlob();
-    let r = liveResult;
-    try { const fr = await analyzeBlob(blob); if (fr.gates.sudut) r = fr; } catch (e) { /* pakai hasil live */ }
+    let r;
+    try { r = await analyzeBlob(blob); } catch (e) { r = null; }
+    // foto hasil jepretan bisa buram walau tampilan live tajam (HP bergerak / fokus ulang saat memotret):
+    // jangan kirim, minta ulang
+    if (!r || !r.ready) {
+      const why = !r ? "Foto tidak bisa dinilai." : !r.gates.sudut ? "4 kotak sudut tidak terlihat di foto."
+        : r.sub.tajam < 0.6 ? "Foto hasil jepretan buram." : r.tip.title + ".";
+      toast(`${why} Foto tidak dikirim, silakan ulangi dan tahan HP tetap diam.`, true);
+      return;
+    }
+    void liveResult;
     await send(blob, r);
   } catch (e) {
     toast(e.message || "Gagal mengambil foto.", true);

@@ -29,6 +29,9 @@ SECRET = os.environ.get("LJK_SECRET") or ""
 TOKEN_HOURS = int(os.environ.get("LJK_TOKEN_HOURS", "72"))
 MAX_UPLOAD_MB = int(os.environ.get("LJK_MAX_UPLOAD_MB", "25"))
 READ_WORKERS = int(os.environ.get("LJK_READ_WORKERS", "2"))   # foto yang dibaca bersamaan
+# Penolakan foto buruk di server (lihat reading.photo_problem)
+MIN_SHARPNESS = float(os.environ.get("LJK_MIN_SHARPNESS", "45"))   # ketajaman bingkai baku; foto tajam ~175
+MAX_PHOTO_NOTES = int(os.environ.get("LJK_MAX_PHOTO_NOTES", "1"))  # catatan pelurusan foto yang masih diterima
 
 if not SECRET:
     # Kunci tanda tangan token disimpan di data/, supaya login tidak putus tiap server dimulai ulang.
