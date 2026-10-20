@@ -36,7 +36,9 @@ export async function api(path, { method = "GET", body, form } = {}) {
   let res;
   try { res = await fetch(path, { method, headers, body: payload }); }
   catch (e) { throw new ApiError(0, "Tidak terhubung ke server. Periksa koneksi internet."); }
-  if (res.status === 401) { session.clear(); location.href = "/"; throw new ApiError(401, "Sesi berakhir."); }
+  if (res.status === 401 && path !== "/api/auth/login") { session.clear(); location.href = "/"; throw new ApiError(401, "Sesi berakhir."); }
+  if ([502, 503, 504].includes(res.status))
+    throw new ApiError(res.status, "Server sedang dimulai ulang atau sibuk. Coba lagi beberapa detik lagi.");
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     let msg = data.detail;
