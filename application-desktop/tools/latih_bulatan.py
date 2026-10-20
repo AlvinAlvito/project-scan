@@ -26,7 +26,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "engine"))   # mesin pembaca ljk/
 from ljk import belajar as BL  # noqa: E402
 from ljk import db as DBM  # noqa: E402
 from ljk import omr as OM  # noqa: E402

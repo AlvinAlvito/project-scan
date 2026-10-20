@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2747">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Scan LJK</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="scan.css">
+</head>
+<body>
+<!-- Bar atas (semua layar kecuali kamera) -->
+<header class="top" id="top">
+  <div class="brand"><div class="logo" data-icon="scan"></div><div><b>Scan LJK</b><span class="muted small" id="who"></span></div></div>
+  <div class="row" style="gap:6px">
+    <button class="btn ghost icon-only" id="b-riwayat" aria-label="Riwayat"><span data-icon="history"></span><span class="dot" id="pending-dot" hidden></span></button>
+    <button class="btn ghost icon-only" id="b-theme" aria-label="Ganti tema"></button>
+    <button class="btn ghost icon-only" id="b-logout" aria-label="Keluar" data-icon="logout"></button>
+  </div>
+</header>
+
+<div class="queue-bar" id="queue-bar" hidden>
+  <span data-icon="cloudOff"></span><span class="grow" id="queue-text"></span>
+  <button class="btn" id="b-flush">Kirim sekarang</button>
+</div>
+
+<!-- 1. Pilih kompetisi, lokasi, bidang -->
+<main class="view" id="v-pilih">
+  <div class="stack">
+    <div><h1>Pilih kompetisi</h1><p class="muted small">Pilih lokasi dan bidang sebelum memindai.</p></div>
+    <div id="akses-list" class="stack"></div>
+  </div>
+  <div class="sticky-foot">
+    <button class="btn primary big block" id="b-mulai" disabled><span data-icon="camera"></span>Mulai scan</button>
+  </div>
+</main>
+
+<!-- 2. Kamera -->
+<section class="cam" id="v-kamera" hidden>
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div class="cam-top">
+    <button class="cam-btn" id="b-cam-back" aria-label="Kembali" data-icon="chevronLeft"></button>
+    <div class="cam-ctx"><b id="ctx-bidang"></b><span id="ctx-lokasi"></span></div>
+    <button class="cam-btn" id="b-torch" aria-label="Senter" data-icon="flash" hidden></button>
+  </div>
+  <div class="score" id="score"><span id="score-num">0%</span></div>
+  <div class="cam-bottom">
+    <div class="chips" id="chips"></div>
+    <div class="tip" id="tip"><b>Menyiapkan kamera…</b><span></span></div>
+    <div class="shutter-row">
+      <label class="cam-btn" aria-label="Pilih dari galeri"><span data-icon="image"></span><input type="file" id="f-galeri" accept="image/*" hidden></label>
+      <button class="shutter" id="b-shutter" disabled aria-label="Ambil dan kirim"><svg viewBox="0 0 80 80"><circle class="ring-bg" cx="40" cy="40" r="36"/><circle class="ring" id="shutter-ring" cx="40" cy="40" r="36"/></svg><span></span></button>
+      <label class="auto"><input type="checkbox" id="c-auto" checked><span>Auto</span></label>
+    </div>
+  </div>
+  <div class="cam-msg" id="cam-msg" hidden></div>
+</section>
+
+<!-- 3. Sedang membaca -->
+<div class="busy" id="v-kirim" hidden><div class="spin big"></div><b id="busy-text">Mengirim & membaca LJK…</b><span class="muted small">Biasanya 2-5 detik</span></div>
+
+<!-- 4. Hasil baca -->
+<main class="view" id="v-hasil" hidden></main>
+
+<!-- 5. Riwayat -->
+<main class="view" id="v-riwayat" hidden>
+  <div class="row"><button class="btn ghost icon-only" id="b-riwayat-back" data-icon="chevronLeft" aria-label="Kembali"></button><h1 class="grow">Riwayat kiriman</h1><button class="btn ghost icon-only" id="b-riwayat-refresh" data-icon="refresh" aria-label="Muat ulang"></button></div>
+  <p class="muted small" id="riwayat-ctx"></p>
+  <div id="riwayat-list" class="stack"></div>
+</main>
+
+<script type="module" src="scan.js"></script>
+</body>
+</html>

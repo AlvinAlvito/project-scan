@@ -12,7 +12,7 @@ dan merekap nilai event olimpiade. Tahap sekarang: **mesin pembaca (OMR)**.
    Bila beberapa garis tak terbaca sehingga urutannya seri, kandidat dipilih dengan pola blok.
 3. **Pelurusan global** memakai ratusan lingkaran cetak merah + garis tepi.
 4. **Per blok** (nama, nomor-kode, tanggal, 6 blok jawaban): posisi blok dicari dengan
-   "sidik jari" pola merahnya (`ljk/ref/*.png`), lalu dihaluskan per petak dan per bulatan
+   "sidik jari" pola merahnya (`engine/ljk/ref/*.png`), lalu dihaluskan per petak dan per bulatan
    (median tetangga) supaya kertas yang melengkung tetap pas. Bila pola merah blok tak
    dikenali (mis. tertutup bayangan), posisi baris diambil dari garis tepi kiri.
 5. **Baca bulatan** dari kanal merah (cetakan merah tak terlihat), skor relatif terhadap
@@ -34,6 +34,9 @@ dan merekap nilai event olimpiade. Tahap sekarang: **mesin pembaca (OMR)**.
    tidak ditebak diam-diam, tetapi dimasukkan ke daftar "perlu cek". Isian di soal setelah
    soal terakhir ujian tidak dinilai; baru diperingatkan bila ada >= 3 isian jelas dalam
    30 nomor sesudahnya (tanda kode naskah mungkin salah).
+
+Mesin pembaca (paket `ljk/`) ada di folder [`../engine/`](../engine/) karena dipakai bersama
+dengan server; aplikasi dan alat di `tools/` memuatnya dari sana secara otomatis.
 
 ## Pemasangan dari repository (Windows, Python 3.13)
 
@@ -62,6 +65,25 @@ sehingga aman saat aplikasi diperbarui. Documents tidak dipakai karena di laptop
    B/S/K/Nilai, dan hal yang perlu dicek. Ekspor Daftar Nilai di kanan atas.
 4. **Cek Manual**: lembar yang perlu dicek; klik catatan untuk melompat ke lokasinya di gambar,
    perbaiki data/jawaban, lalu "Simpan & tandai sudah dicek" (Ctrl+Enter) -> pindah ke lembar berikutnya.
+
+## Menarik LJK dari server (LJK Reader Online)
+
+LJK yang dipotret admin daerah lewat web HP (lihat [`../server/README.md`](../server/README.md))
+ditarik ke event desktop:
+
+1. **Hubungkan server** (sidebar kiri bawah): alamat server + akun superadmin. Token login disimpan,
+   kata sandi tidak.
+2. Buka event, tab **Scan & Nilai** → **Sinkron server**. Pertama kali, pilih kompetisi server
+   yang dihubungkan dengan event ini.
+3. Lembar yang sudah dikonfirmasi/ditandai admin daerah diunduh dan dibaca ulang di laptop
+   (mesin yang sama). Data yang dikoreksi admin daerah dipakai, hasil baca asli tetap tampil
+   sebagai "terbaca: …" di Cek Manual. Catatan server (nomor tidak terdaftar, duplikat, koreksi,
+   peserta baru, kualitas foto < 85%) masuk ke daftar perlu cek. Kolom **Lokasi** dan **Foto**
+   (skor kualitas dari HP) tampil di tabel.
+4. Lembar yang sudah dicek dilaporkan ke server pada sinkron berikutnya (terlihat di panel admin).
+
+Kunci jawaban tetap hanya di desktop; isi seperti biasa di tab Kunci Jawaban dengan kode naskah
+yang sama dengan bidang di server.
 
 ## Mengajari model membaca bulatan (tab "4. Latih Model")
 

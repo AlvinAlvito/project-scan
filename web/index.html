@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2747">
+<title>Masuk · LJK Reader</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<main class="login">
+  <form class="card" id="f" novalidate>
+    <div class="brand"><div class="logo" id="logo"></div><div><b>LJK Reader</b><span class="muted small">POSI · pemindai LJK</span></div></div>
+    <div>
+      <h1>Masuk</h1>
+      <p class="muted small" style="margin:4px 0 0">Gunakan akun dari panitia pusat.</p>
+    </div>
+    <label class="field"><span>Username</span><input class="input" id="u" name="username" autocomplete="username" autocapitalize="none" required></label>
+    <label class="field"><span>Kata sandi</span><input class="input" id="p" name="password" type="password" autocomplete="current-password" required></label>
+    <div class="alert err" id="err" hidden></div>
+    <button class="btn primary big block" id="go" type="submit">Masuk</button>
+  </form>
+</main>
+<script type="module">
+import { api, session, icon } from "/static/js/common.js";
+document.getElementById("logo").innerHTML = icon("scan");
+const dest = u => u.peran === "superadmin" ? "/admin/" : "/scan/";
+if (session.token && session.user) location.replace(dest(session.user));
+const f = document.getElementById("f"), err = document.getElementById("err"), go = document.getElementById("go");
+f.onsubmit = async e => {
+  e.preventDefault();
+  err.hidden = true;
+  const username = f.username.value.trim(), password = f.password.value;
+  if (!username || !password) { err.textContent = "Isi username dan kata sandi."; err.hidden = false; return; }
+  go.disabled = true; go.textContent = "Memeriksa…";
+  try {
+    const r = await api("/api/auth/login", { method: "POST", body: { username, password } });
+    session.save(r.token, r.user);
+    location.replace(dest(r.user));
+  } catch (ex) {
+    err.textContent = ex.message; err.hidden = false;
+  } finally { go.disabled = false; go.textContent = "Masuk"; }
+};
+</script>
+</body>
+</html>

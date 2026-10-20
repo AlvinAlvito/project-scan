@@ -21,3 +21,6 @@ output/
 *.onnx
 latih.json
 aktif*.json
+
+# Konfigurasi server (berisi kata sandi database)
+.env

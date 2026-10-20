@@ -149,6 +149,42 @@ def duplicate_nomor(rows):
     return {n for n, k in c.items() if k > 1}
 
 
+KUALITAS_MIN = 85      # skor kualitas foto dari HP di bawah ini ikut dilaporkan
+
+
+def server_info(row):
+    """Data dari server LJK Reader Online untuk lembar yang ditarik (kosong untuk foto lokal)."""
+    try:
+        return json.loads(row["server"] or "{}")
+    except (IndexError, KeyError, ValueError):
+        return {}
+
+
+def server_issues(row):
+    """Catatan dari server & admin daerah yang perlu dicek panitia pusat."""
+    srv = server_info(row)
+    if not srv:
+        return []
+    out = [{"text": f"Server: {c}", "key": "server", "x": None, "y": None} for c in srv.get("catatan", [])]
+    kon = srv.get("konfirmasi") or {}
+    oleh = kon.get("oleh") or "admin daerah"
+    label = {"nama": "nama", "nomor": "nomor peserta", "kode": "kode naskah"}
+    for k, v in (kon.get("koreksi") or {}).items():
+        out.append({"text": f"Dikoreksi {oleh}: {label.get(k, k)} terbaca '{srv.get('terbaca', {}).get(k, '')}' "
+                            f"diganti '{v}'", "key": k, "x": None, "y": None})
+    if kon.get("catatan"):
+        out.append({"text": f"Catatan {oleh}: {kon['catatan']}", "key": "server", "x": None, "y": None})
+    pb = srv.get("peserta_baru")
+    if pb:
+        st = "sudah disetujui" if srv.get("peserta_baru_status") == "disetujui" else "belum disetujui"
+        out.append({"text": f"Peserta baru daftar di tempat ({st}): {pb.get('nama', '')} {pb.get('nomor', '')}",
+                    "key": "nomor", "x": None, "y": None})
+    if srv.get("skor_kualitas") is not None and srv["skor_kualitas"] < KUALITAS_MIN:
+        out.append({"text": f"Kualitas foto dari HP rendah ({srv['skor_kualitas']}%)", "key": "foto",
+                    "x": None, "y": None})
+    return out
+
+
 def sheet_view(row, naskah, dup):
     """Status satu lembar. naskah: {kode: Soal}; dup: himpunan nomor peserta ganda."""
     if row["error"]:
@@ -171,6 +207,8 @@ def sheet_view(row, naskah, dup):
         skor = NI.nilai(jawaban, soal)
         if skor.lebih:
             issues.append({"text": skor.catatan[-1], "key": f"soal:{skor.lebih[0]}", "x": None, "y": None})
+    if not row["dicek"]:
+        issues += server_issues(row)
     if row["dicek"] and any(ch in (row["nama"] + row["nomor"] + row["kode"]) for ch in "?_"):
         issues.append({"text": "masih ada tanda ? atau _ di data peserta", "key": "kepala", "x": None, "y": None})
     if row["nomor"] in dup:

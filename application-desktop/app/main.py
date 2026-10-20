@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ENGINE = ROOT.parent / "engine"          # mesin pembaca ljk/ (dipakai bersama dengan server)
+for p in (ENGINE, ROOT):
+    if p.exists() and str(p) not in sys.path:
+        sys.path.insert(0, str(p))
 
 from PySide6.QtCore import QStandardPaths, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402

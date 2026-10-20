@@ -18,7 +18,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "engine"))   # mesin pembaca ljk/
 from ljk import export as EX  # noqa: E402
 from ljk import nilai as NI  # noqa: E402
 from ljk import pipeline as PL  # noqa: E402

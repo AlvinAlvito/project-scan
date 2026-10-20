@@ -14,7 +14,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "engine"))   # mesin pembaca ljk/
 from ljk import kunci as KU  # noqa: E402
 
 FILL_HEAD = PatternFill("solid", fgColor="D9D9D9")

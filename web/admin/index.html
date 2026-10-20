@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2747">
+<title>Panel Admin · LJK Reader</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="side" id="side">
+    <div class="brand"><div class="logo" data-icon="scan"></div><div><b>LJK Reader</b><span class="small" style="color:var(--side-muted)">Panel superadmin</span></div></div>
+    <nav id="nav">
+      <a href="#/dashboard" data-r="dashboard"><span data-icon="dashboard"></span>Dashboard</a>
+      <a href="#/kompetisi" data-r="kompetisi"><span data-icon="trophy"></span>Kompetisi</a>
+      <a href="#/bidang" data-r="bidang"><span data-icon="book"></span>Master bidang</a>
+      <a href="#/lembar" data-r="lembar"><span data-icon="sheet"></span>Lembar masuk</a>
+      <a href="#/persetujuan" data-r="persetujuan"><span data-icon="userPlus"></span>Peserta baru<span class="count" id="nav-pb" hidden></span></a>
+      <a href="#/akun" data-r="akun"><span data-icon="users"></span>Akun & akses</a>
+    </nav>
+    <div class="side-foot">
+      <a href="/scan/" class="side-link"><span data-icon="camera"></span>Buka halaman scan</a>
+      <button class="side-link" id="b-pw"><span data-icon="key"></span>Ganti kata sandi</button>
+      <button class="side-link" id="b-theme"></button>
+      <button class="side-link" id="b-logout"><span data-icon="logout"></span>Keluar</button>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="mtop"><button class="btn ghost icon-only" id="b-menu" data-icon="menu" aria-label="Menu"></button><b>LJK Reader</b></header>
+    <main id="page" class="page"></main>
+  </div>
+</div>
+<script type="module" src="admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Kebutuhan mesin pembaca ljk/ (sudah termasuk di requirements desktop & server)
+numpy>=2.0
+opencv-python-headless>=4.10
+openpyxl>=3.1
+# hanya untuk impor kunci dari PDF pembahasan (aplikasi desktop)
+pypdfium2

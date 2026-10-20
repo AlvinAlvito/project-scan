@@ -7,18 +7,26 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QProgressBar,
                                QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from app import server_client as SC
 from app import theme
 from app.colors import paint
+from app.server_dialog import KompetisiDialog, ServerDialog
 from app.widgets import EmptyState, StatCard, divider, setup_table, toolbar
 from ljk import service as SV
 
 EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 STATUS_TONE = {"OK": "ok", "Perlu cek": "warn", "Sudah dicek": "info", "Gagal": "error"}
-HEAD = ["#", "File", "Status", "Nama", "Nomor", "Kode", "Bidang", "Benar", "Salah", "Kosong", "Nilai", "Catatan"]
-CENTER = (0, 7, 8, 9, 10)
+HEAD = ["#", "Sumber", "Status", "Nama", "Nomor", "Kode", "Bidang", "Lokasi", "Foto", "Benar", "Salah", "Kosong",
+        "Nilai", "Catatan"]
+COL_STATUS, COL_FOTO, COL_NILAI = 2, 8, 12
+CENTER = (0, 8, 9, 10, 11, 12)
 
 
 class Worker(QThread):
+    """Baca foto satu per satu di latar belakang.
+
+    items: [(urutan, path, srv)]; srv None untuk foto lokal, atau dict untuk lembar dari server:
+    {"server_id", "server": meta, "download": url foto (bila belum diunduh)}."""
     one = Signal(int, object)          # urutan, rekaman hasil baca
     progress = Signal(int, int, str)   # selesai, total, nama file
 
@@ -28,20 +36,32 @@ class Worker(QThread):
 
     def run(self):
         n = len(self.items)
-        for k, (urutan, path) in enumerate(self.items):
+        for k, (urutan, path, srv) in enumerate(self.items):
             if self.isInterruptionRequested():
                 break
-            self.progress.emit(k, n, Path(path).name)
+            self.progress.emit(k, n, f"server #{srv['server_id']}" if srv else Path(path).name)
             try:
+                if srv and srv.get("download") and not Path(path).exists():
+                    SC.download(srv["download"], path)
                 rec = SV.process_photo(path, self.out_dir)
+            except SC.ServerError as e:
+                rec = {"file": str(path), "error": f"Gagal mengunduh dari server: {e}", "baca": {}, "unduh_gagal": True}
             except Exception as e:  # foto rusak dsb.: dicatat, proses lanjut
                 rec = {"file": str(path), "error": f"Gagal diproses: {e}", "baca": {}}
+            if srv:
+                rec["server_id"], rec["server"] = srv["server_id"], srv["server"]
+                # data yang dikoreksi admin daerah menggantikan hasil baca (hasil baca asli tetap
+                # tersimpan di 'baca', sehingga layar Cek Manual menampilkan perbedaannya)
+                for key, val in ((srv["server"].get("konfirmasi") or {}).get("koreksi") or {}).items():
+                    if key in ("nama", "nomor", "kode") and val and not rec.get("error"):
+                        rec[key] = val
             self.one.emit(urutan, rec)
         self.progress.emit(n, n, "")
 
 
 class ScanTab(QWidget):
     open_review = Signal(int)
+    linked = Signal()                  # event dihubungkan ke kompetisi server
 
     def __init__(self, db, data_dir):
         super().__init__()
@@ -49,25 +69,28 @@ class ScanTab(QWidget):
         self.event_id = None
         self.worker = None
         self._pending = 0
+        self._pulled = []
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 18, 0, 0)
         v.setSpacing(14)
 
         bar = toolbar()
-        self.btn_folder = theme.button("Tambah folder", "folder-plus", "primary",
-                                       "Proses semua foto di satu folder", self._add_folder)
+        self.btn_folder = theme.button("Tambah folder", "folder-plus", tip="Proses semua foto di satu folder",
+                                       slot=self._add_folder)
         self.btn_files = theme.button("Tambah foto", "image-plus", tip="Pilih beberapa foto", slot=self._add_files)
         self.btn_redo = theme.button("Proses ulang", "refresh", tip="Baca ulang lembar yang dipilih",
                                      slot=self._reprocess)
         self.btn_del = theme.button("Hapus", "trash", "danger", "Hapus lembar yang dipilih (foto asli tetap ada)",
                                     self._delete)
+        self.btn_sync = theme.button("Sinkron server", "cloud-download", "primary",
+                                     "Tarik LJK yang dikirim admin daerah lewat HP", self._sync)
         self.only_check = theme.button("Perlu cek saja", "filter", tip="Tampilkan hanya lembar yang perlu dicek")
         self.only_check.setCheckable(True)
         self.only_check.toggled.connect(self.refresh)
         self.btn_export = theme.button("Ekspor nilai", "download", tip="Simpan daftar nilai ke Excel",
                                        slot=self._export)
-        for w in (self.btn_folder, self.btn_files, divider(), self.btn_redo, self.btn_del):
+        for w in (self.btn_sync, divider(), self.btn_folder, self.btn_files, divider(), self.btn_redo, self.btn_del):
             bar.addWidget(w)
         bar.addStretch()
         bar.addWidget(self.only_check)
@@ -151,8 +174,11 @@ class ScanTab(QWidget):
         for r, v in enumerate(views):
             row = v.row
             sk = v.skor
-            vals = [row["urutan"], Path(row["file"]).name, v.status, row["nama"], row["nomor"], row["kode"],
-                    v.soal.bidang if v.soal else "",
+            srv = SV.server_info(row)
+            q = srv.get("skor_kualitas")
+            vals = [row["urutan"], f"server #{srv['id']}" if srv else Path(row["file"]).name, v.status,
+                    row["nama"], row["nomor"], row["kode"], v.soal.bidang if v.soal else "", srv.get("kota", ""),
+                    "" if q is None else f"{q}%",
                     "" if sk is None else sk.benar, "" if sk is None else sk.salah,
                     "" if sk is None else sk.kosong, "" if sk is None else sk.nilai,
                     "; ".join(i["text"] for i in v.issues)]
@@ -162,10 +188,15 @@ class ScanTab(QWidget):
                     it.setTextAlignment(Qt.AlignCenter)
                 if c == 0:
                     it.setData(Qt.UserRole, row["id"])
-                if c == 2:
+                if c == 1 and srv:
+                    it.setToolTip(f"Dikirim {srv.get('uploader', '')} dari {srv.get('kota', '')} - {srv.get('dibuat', '')}\n"
+                                  f"Keyakinan baca server: {srv.get('keyakinan', '?')}%")
+                if c == COL_STATUS:
                     it.setTextAlignment(Qt.AlignCenter)
                     paint(it, STATUS_TONE.get(v.status))
-                if c == 10 and val != "":
+                if c == COL_FOTO and q is not None:
+                    paint(it, "ok" if q >= 90 else "warn" if q >= SV.KUALITAS_MIN else "error")
+                if c == COL_NILAI and val != "":
                     f = it.font()
                     f.setBold(True)
                     it.setFont(f)
@@ -191,7 +222,7 @@ class ScanTab(QWidget):
         if files:
             self._start([Path(f) for f in files])
 
-    def _start(self, paths, urutan=None):
+    def _start(self, paths, urutan=None, srv=None):
         if self.event_id is None or self.busy():
             return
         if urutan is None:
@@ -202,11 +233,15 @@ class ScanTab(QWidget):
                 QMessageBox.information(self, "Tambah foto", "Semua foto itu sudah ada di event ini.")
                 return
             start = self.db.next_urutan(self.event_id)
-            items = [(start + i, p) for i, p in enumerate(new)]
+            items = [(start + i, p, None) for i, p in enumerate(new)]
             if skipped:
                 QMessageBox.information(self, "Tambah foto", f"{skipped} foto dilewati karena sudah ada di event ini.")
         else:
-            items = list(zip(urutan, paths))
+            items = list(zip(urutan, paths, srv or [None] * len(paths)))
+        self._run(items)
+
+    def _run(self, items):
+        self._pulled = []
         self.worker = Worker(items, self._out_dir())
         self.worker.one.connect(self._one_done)
         self.worker.progress.connect(self._progress)
@@ -215,6 +250,10 @@ class ScanTab(QWidget):
         self.worker.start()
 
     def _one_done(self, urutan, rec):
+        if rec.get("unduh_gagal"):
+            return                      # tidak disimpan; dicoba lagi pada sinkron berikutnya
+        if rec.get("server_id"):
+            self._pulled.append(rec["server_id"])
         self.db.add_lembar(self.event_id, urutan, rec)
         self._pending += 1
         if self._pending >= 5:
@@ -230,13 +269,22 @@ class ScanTab(QWidget):
         self._set_running(False)
         self._pending = 0
         self.refresh()
+        if self._pulled:
+            n = len(self._pulled)
+            try:
+                SC.mark_pulled(self._pulled)
+            except SC.ServerError as e:
+                QMessageBox.warning(self, "Sinkron server", "Lembar sudah tersimpan, tetapi status 'ditarik' belum "
+                                    f"terkirim ke server:\n{e}\n\nAkan dicoba lagi saat sinkron berikutnya.")
+            self._pulled = []
+            QMessageBox.information(self, "Sinkron server", f"{n} lembar dari server sudah dibaca dan masuk ke event ini.")
 
     def _stop(self):
         if self.busy():
             self.worker.requestInterruption()
 
     def _set_running(self, running):
-        for w in (self.btn_folder, self.btn_files, self.btn_redo, self.btn_del, self.btn_export):
+        for w in (self.btn_sync, self.btn_folder, self.btn_files, self.btn_redo, self.btn_del, self.btn_export):
             w.setEnabled(not running)
         self.prog_box.setVisible(running)
         if not running:
@@ -252,7 +300,8 @@ class ScanTab(QWidget):
                 self, "Proses ulang", "Sebagian lembar sudah dicek manual. Hasil cek akan hilang. Lanjutkan?"
         ) != QMessageBox.Yes:
             return
-        self._start([Path(r["file"]) for r in rows], urutan=[r["urutan"] for r in rows])
+        srv = [{"server_id": r["server_id"], "server": SV.server_info(r)} if r["server_id"] else None for r in rows]
+        self._start([Path(r["file"]) for r in rows], urutan=[r["urutan"] for r in rows], srv=srv)
 
     def _delete(self):
         ids = self._selected_ids()
@@ -268,6 +317,58 @@ class ScanTab(QWidget):
                 shutil.rmtree(Path(r["gambar"]).parent, ignore_errors=True)
         self.db.delete_lembar(ids)
         self.refresh()
+
+    # ---- sinkron server
+    def _sync(self):
+        """Laporkan lembar yang sudah dicek, lalu tarik lembar baru dari server dan baca di sini."""
+        if self.event_id is None or self.busy():
+            return
+        if not SC.logged_in() and not ServerDialog(self).exec():
+            return
+        ev = self.db.event(self.event_id)
+        url = SC.config()["url"]
+        kid = ev["server_kompetisi_id"] if ev["server_url"] == url else None
+        done = []
+        try:
+            if not kid:
+                d = KompetisiDialog(self, SC.kompetisi())
+                if not d.list.count():
+                    QMessageBox.information(self, "Sinkron server",
+                                            "Belum ada kompetisi di server. Buat dulu di panel admin web.")
+                    return
+                if not d.exec() or not d.selected():
+                    return
+                kid = d.selected()["id"]
+                self.db.link_server(self.event_id, kid, url)
+                self.linked.emit()
+            done = self.db.dicek_unsynced(self.event_id)
+            if done:
+                SC.mark_checked(done)
+                self.db.mark_server_dicek(self.event_id, done)
+            res = SC.pending(kid)
+        except SC.ServerError as e:
+            QMessageBox.warning(self, "Sinkron server", str(e))
+            return
+        have = self.db.server_ids(self.event_id)
+        again = [i["id"] for i in res["items"] if i["id"] in have]
+        if again:                       # sudah ada di sini, tapi status 'ditarik' belum tercatat di server
+            try:
+                SC.mark_pulled(again)
+            except SC.ServerError:
+                pass
+        new = [i for i in res["items"] if i["id"] not in have]
+        if not new:
+            wait = res.get("menunggu_konfirmasi", 0)
+            QMessageBox.information(self, "Sinkron server", "Tidak ada lembar baru dari server." +
+                                    (f"\n{wait} lembar masih menunggu konfirmasi admin daerah." if wait else "") +
+                                    (f"\n{len(done)} status 'sudah dicek' dikirim ke server." if done else ""))
+            return
+        start = self.db.next_urutan(self.event_id)
+        folder = self._out_dir() / "server"
+        items = [(start + k, folder / f"{it['id']}.jpg",
+                  {"server_id": it["id"], "server": SC.meta(it), "download": it["urls"]["foto"]})
+                 for k, it in enumerate(new)]
+        self._run(items)
 
     # ---- ekspor
     def _export(self):

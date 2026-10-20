@@ -13,7 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "engine"))   # mesin pembaca ljk/
 from ljk import align as AL  # noqa: E402
 from ljk import template as T  # noqa: E402
 

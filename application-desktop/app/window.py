@@ -7,11 +7,12 @@ from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineE
                                QMainWindow, QMessageBox, QStackedWidget, QStyle, QStyledItemDelegate, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from app import icons, theme
+from app import icons, server_client as SC, theme
 from app.kunci_tab import KunciTab
 from app.latih_tab import LatihTab
 from app.review_tab import ReviewTab
 from app.scan_tab import ScanTab
+from app.server_dialog import ServerDialog
 from app.widgets import EmptyState
 
 TABS = (("key", "Kunci Jawaban"), ("scan", "Scan && Nilai"), ("clipboard-check", "Cek Manual"),
@@ -155,6 +156,8 @@ class MainWindow(QMainWindow):
         self._side_line = line
         sv.addWidget(line)
         sv.addSpacing(4)
+        self.btn_server = theme.button("", "cloud", tip="Koneksi ke server LJK Reader Online", slot=self._server)
+        sv.addWidget(self.btn_server)
         folder = theme.button("Folder data", "folder", tip=str(data_dir),
                               slot=lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir))))
         sv.addWidget(folder)
@@ -191,6 +194,7 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._tab_changed)
         self.kunci.changed.connect(self.scan.refresh)
         self.scan.open_review.connect(self._open_review)
+        self.scan.linked.connect(self._update_header)
         self.review.changed.connect(self.scan.refresh)
 
         self.empty = EmptyState("calendar", "Belum ada event",
@@ -217,6 +221,7 @@ class MainWindow(QMainWindow):
         dark = theme.name() == "gelap"
         theme.set_icon(self.btn_theme, "sun" if dark else "moon")
         self.btn_theme.setText("Tema terang" if dark else "Tema gelap")
+        self._update_server_button()
         dpr = self.devicePixelRatioF() or 2.0
         self.logo.setPixmap(icons.pixmap("scan", theme.c("on_accent"), 22, dpr))
         self.logo.setStyleSheet(f"background: {theme.c('accent')}; border-radius: 10px;")
@@ -254,17 +259,30 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.tabs if has else self.empty)
         self.btn_edit.setEnabled(has)
         self.btn_delete.setEnabled(has)
-        if has:
-            ev = self.db.event(event_id)
-            self.title.setText(ev["nama"])
-            self.subtitle.setText(ev["tanggal"])
-        else:
-            self.title.setText("Selamat datang")
-            self.subtitle.setText("Pembaca Lembar Jawaban Komputer POSI")
+        self._update_header()
         self.latih.load(event_id)
         self.kunci.load(event_id)
         self.scan.load(event_id)
         self.review.load(event_id)
+
+    def _update_header(self):
+        if self.event_id is None:
+            self.title.setText("Selamat datang")
+            self.subtitle.setText("Pembaca Lembar Jawaban Komputer POSI")
+            return
+        ev = self.db.event(self.event_id)
+        self.title.setText(ev["nama"])
+        linked = ev["server_kompetisi_id"] and ev["server_url"]
+        self.subtitle.setText(ev["tanggal"] + (f"  ·  terhubung ke server (kompetisi #{ev['server_kompetisi_id']})"
+                                               if linked else ""))
+
+    def _update_server_button(self):
+        c = SC.config()
+        self.btn_server.setText(f"Server · {c['nama']}" if SC.logged_in() else "Hubungkan server")
+
+    def _server(self):
+        ServerDialog(self).exec()
+        self._update_server_button()
 
     def _new_event(self):
         d = EventDialog(self)

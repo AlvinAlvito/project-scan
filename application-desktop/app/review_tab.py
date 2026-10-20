@@ -117,6 +117,11 @@ class ReviewTab(QWidget):
             form.addRow(label, w)
             form.addRow("", self.read_lbl[key])
         form.addRow("Bidang", self.f_bidang)
+        self.f_server = QLabel("")
+        self.f_server.setWordWrap(True)
+        self.f_server.setProperty("role", "muted")
+        form.addRow("Dikirim", self.f_server)
+        self._form = form
         for w in (self.f_nama, self.f_nomor, self.f_tanggal):
             w.textEdited.connect(self._mark_dirty)
         self.f_kode.currentTextChanged.connect(self._kode_changed)
@@ -298,6 +303,12 @@ class ReviewTab(QWidget):
             spm.setDevicePixelRatio(dpr)
             lb.setPixmap(spm)
             lb.setMinimumSize(w, h)
+        srv = SV.server_info(row)
+        if srv:
+            self.f_server.setText(f"{srv.get('kota', '')} · {srv.get('uploader', '')} · {srv.get('dibuat', '')}\n"
+                                  f"kualitas foto {srv.get('skor_kualitas', '?')}% · keyakinan baca server "
+                                  f"{srv.get('keyakinan', '?')}% · lembar server #{srv.get('id')}")
+        self._form.setRowVisible(self.f_server, bool(srv))
         self._update_kode_label()
         self._fill_issues()
         self._fill_answers()

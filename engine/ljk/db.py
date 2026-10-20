@@ -59,6 +59,17 @@ class DB:
         if "sumber" not in cols:   # database dari versi sebelumnya
             with self.con:
                 self.con.execute("ALTER TABLE naskah ADD COLUMN sumber TEXT DEFAULT ''")
+        # Kolom sinkron server (LJK Reader Online), ditambahkan ke database lama bila belum ada
+        self._add_columns("event", {"server_kompetisi_id": "INTEGER", "server_url": "TEXT DEFAULT ''"})
+        self._add_columns("lembar", {"server_id": "INTEGER", "server": "TEXT DEFAULT '{}'",
+                                     "server_dicek": "INTEGER DEFAULT 0"})
+
+    def _add_columns(self, table, cols):
+        have = {r["name"] for r in self.con.execute(f"PRAGMA table_info({table})")}
+        with self.con:
+            for name, decl in cols.items():
+                if name not in have:
+                    self.con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     # ---- event
     def events(self):
@@ -75,6 +86,11 @@ class DB:
     def update_event(self, event_id, nama, tanggal):
         with self.con:
             self.con.execute("UPDATE event SET nama=?, tanggal=? WHERE id=?", (nama, tanggal, event_id))
+
+    def link_server(self, event_id, kompetisi_id, url):
+        with self.con:
+            self.con.execute("UPDATE event SET server_kompetisi_id=?, server_url=? WHERE id=?",
+                             (kompetisi_id, url, event_id))
 
     def delete_event(self, event_id):
         with self.con:
@@ -111,15 +127,33 @@ class DB:
         with self.con:
             self.con.execute(
                 """INSERT OR REPLACE INTO lembar(event_id, urutan, file, error, nama, nomor, kode, tanggal,
-                   jawaban, baca, dicek, gambar, potongan) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                   jawaban, baca, dicek, gambar, potongan, server_id, server, server_dicek)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,0)""",
                 (event_id, urutan, rec["file"], rec.get("error", ""), rec.get("nama", ""), rec.get("nomor", ""),
                  rec.get("kode", ""), rec.get("tanggal", ""), json.dumps(rec.get("jawaban", [])),
-                 json.dumps(rec.get("baca", {})), rec.get("gambar", ""), json.dumps(rec.get("potongan", {}))))
+                 json.dumps(rec.get("baca", {})), rec.get("gambar", ""), json.dumps(rec.get("potongan", {})),
+                 rec.get("server_id"), json.dumps(rec.get("server") or {})))
+
+    # ---- sinkron server
+    def server_ids(self, event_id):
+        return {r[0] for r in self.con.execute("SELECT server_id FROM lembar WHERE event_id=? AND server_id IS NOT NULL",
+                                               (event_id,))}
+
+    def dicek_unsynced(self, event_id):
+        """server_id lembar yang sudah dicek di desktop tapi belum dilaporkan ke server."""
+        return [r[0] for r in self.con.execute(
+            "SELECT server_id FROM lembar WHERE event_id=? AND server_id IS NOT NULL AND dicek=1 AND server_dicek=0",
+            (event_id,))]
+
+    def mark_server_dicek(self, event_id, server_ids):
+        with self.con:
+            self.con.executemany("UPDATE lembar SET server_dicek=1 WHERE event_id=? AND server_id=?",
+                                 [(event_id, i) for i in server_ids])
 
     def save_review(self, lembar_id, nama, nomor, kode, tanggal, jawaban, dicek=True):
         with self.con:
-            self.con.execute("UPDATE lembar SET nama=?, nomor=?, kode=?, tanggal=?, jawaban=?, dicek=? WHERE id=?",
-                             (nama, nomor, kode, tanggal, json.dumps(jawaban), int(dicek), lembar_id))
+            self.con.execute("UPDATE lembar SET nama=?, nomor=?, kode=?, tanggal=?, jawaban=?, dicek=?, server_dicek=0 "
+                             "WHERE id=?", (nama, nomor, kode, tanggal, json.dumps(jawaban), int(dicek), lembar_id))
 
     def rebase_paths(self, old, new):
         """Ganti awalan path gambar & potongan (dipakai saat folder data dipindah)."""

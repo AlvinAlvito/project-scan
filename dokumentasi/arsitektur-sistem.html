@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arsitektur LJK Reader Online</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: satu kolom lebar baca, diagram selebar kontainer (gulir sendiri di HP); nada biru tua seperti aplikasi desktop */
+:root {
+  --bg: #f3f5f9; --surface: #ffffff; --ink: #0f1d33; --muted: #5b6a80; --line: #c8d2e0; --soft: #e6ecf5;
+  --accent: #1e3a8a; --accent-soft: #e2e9f7;
+  --ok: #157347; --ok-soft: #e1f4e9; --warn: #9a5b00; --warn-soft: #fff1d6; --err: #b42318; --err-soft: #fde6e4;
+  --phone: #0c1220; --phone-ink: #eef2f8;
+  --f-display: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1117; --surface: #151b25; --ink: #e8ecf3; --muted: #8e98ab; --line: #2f3a4b; --soft: #1b2330;
+  --accent: #86a8ff; --accent-soft: #1c2945;
+  --ok: #6fdc9f; --ok-soft: #13301f; --warn: #f7c063; --warn-soft: #36290f; --err: #fb9d95; --err-soft: #3a191a;
+  --phone: #05080e; --phone-ink: #eef2f8; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0d1117; --surface: #151b25; --ink: #e8ecf3; --muted: #8e98ab; --line: #2f3a4b; --soft: #1b2330;
+  --accent: #86a8ff; --accent-soft: #1c2945;
+  --ok: #6fdc9f; --ok-soft: #13301f; --warn: #f7c063; --warn-soft: #36290f; --err: #fb9d95; --err-soft: #3a191a;
+  --phone: #05080e; --phone-ink: #eef2f8; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 15px/1.65 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px; }
+.wrap { max-width: 1060px; margin: 0 auto; display: grid; gap: 56px; }
+header { display: grid; gap: 12px; max-width: 760px; }
+.eyebrow { font: 600 12px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 800 clamp(30px, 5vw, 44px)/1.1 var(--f-display); margin: 0; letter-spacing: -.02em; text-wrap: balance; }
+h2 { font: 700 23px/1.25 var(--f-display); margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+h3 { font: 700 16px/1.3 var(--f-display); margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lead { font-size: 17px; color: var(--muted); }
+section { display: grid; gap: 18px; min-width: 0; }
+.sub { color: var(--muted); }
+code, .mono { font-family: var(--f-mono); font-size: .88em; }
+
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.scroll { overflow-x: auto; padding: 20px; }
+.scroll svg { display: block; width: 100%; min-width: 860px; height: auto; color: var(--muted); }
+figcaption { border-top: 1px solid var(--line); padding: 12px 20px; font-size: 13.5px; color: var(--muted); }
+
+/* elemen svg */
+.box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.box-soft { fill: var(--soft); stroke: var(--line); stroke-width: 1.2; }
+.box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.8; }
+.zone { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.t { fill: var(--ink); font: 500 13px var(--f-body); }
+.tb { fill: var(--ink); font: 700 14px var(--f-display); }
+.tm { fill: var(--muted); font: 500 11px var(--f-mono); }
+.ta { fill: var(--accent); font: 700 13px var(--f-display); }
+.tl { fill: var(--muted); font: 600 11px var(--f-mono); }
+.zl { fill: var(--accent); font: 700 11px var(--f-mono); letter-spacing: .08em; }
+.edge { stroke: currentColor; stroke-width: 1.6; fill: none; }
+.edge-a { stroke: #3b6cff; stroke-width: 2; fill: none; }
+.edge-d { stroke: currentColor; stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.pill-ok { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.5; }
+.pill-warn { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.5; }
+.pill-err { fill: var(--err-soft); stroke: var(--err); stroke-width: 1.5; }
+.t-ok { fill: var(--ok); font: 700 13px var(--f-display); }
+.t-warn { fill: var(--warn); font: 700 13px var(--f-display); }
+.t-err { fill: var(--err); font: 700 13px var(--f-display); }
+.head { fill: var(--accent); }
+.th { fill: #ffffff; font: 700 13px var(--f-mono); }
+:root[data-theme="dark"] .th { fill: #0d1117; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .th { fill: #0d1117; } }
+.f { fill: var(--ink); font: 400 12px var(--f-mono); }
+.fk { fill: var(--muted); font: 400 12px var(--f-mono); }
+.fn { fill: var(--warn); font: 600 11px var(--f-mono); }
+
+/* langkah alur */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; counter-reset: s; }
+.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.steps li::before { content: counter(s); font: 700 12px/1 var(--f-mono); color: var(--accent); }
+.lane { justify-self: start; font: 600 11px/1 var(--f-mono); padding: 5px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.lane.srv { background: var(--soft); color: var(--ink); }
+.lane.dsk { background: var(--ok-soft); color: var(--ok); }
+.steps p { font-size: 14px; color: var(--muted); }
+
+/* layar HP */
+.phones { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 20px; }
+.phone { background: var(--phone); color: var(--phone-ink); border-radius: 30px; padding: 14px; border: 1px solid var(--line); display: grid; gap: 12px; max-width: 300px; width: 100%; justify-self: center; }
+.ph-top { display: flex; justify-content: space-between; font: 500 11px var(--f-mono); color: #9aa6ba; padding: 0 6px; }
+.view { position: relative; aspect-ratio: 3 / 4; border-radius: 18px; overflow: hidden; display: grid; place-items: center; }
+.view.dark { background: radial-gradient(circle at 50% 45%, #2a2f38, #0b0d11 75%); }
+.view.far { background: #6f6658; }
+.view.ok { background: #8f8676; }
+.sheet { background: #f4f1ea; border-radius: 3px; position: relative; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+.view.dark .sheet { background: #4a4740; width: 64%; aspect-ratio: 1400/2000; }
+.view.far .sheet { width: 42%; aspect-ratio: 1400/2000; }
+.view.ok .sheet { width: 80%; aspect-ratio: 1400/2000; }
+.sheet::before { content: ""; position: absolute; inset: 9% 8% 7% 12%; background:
+  repeating-linear-gradient(0deg, rgba(200,90,70,.35) 0 2px, transparent 2px 7px); border-radius: 2px; }
+.corner { position: absolute; width: 7%; aspect-ratio: 1; background: #111; }
+.c1 { top: 2%; left: 3%; } .c2 { top: 2%; right: 3%; } .c3 { bottom: 2%; left: 3%; } .c4 { bottom: 2%; right: 3%; }
+.frame { position: absolute; inset: 7% 9%; border: 2px dashed rgba(255,255,255,.55); border-radius: 8px; }
+.view.ok .frame { border: 2.5px solid #4ade80; }
+.score { position: absolute; top: 10px; right: 10px; width: 62px; height: 62px; border-radius: 50%;
+  display: grid; place-items: center; font: 800 15px var(--f-display); color: #fff;
+  background: conic-gradient(var(--c) calc(var(--p) * 1%), rgba(255,255,255,.18) 0); }
+.score span { width: 50px; height: 50px; border-radius: 50%; background: rgba(5,8,14,.86); display: grid; place-items: center; }
+.tip { border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.45; background: #172033; display: grid; gap: 2px; }
+.tip b { font-family: var(--f-display); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 11px/1 var(--f-mono); padding: 5px 7px; border-radius: 999px; background: #1b2436; color: #b8c2d4; }
+.chip.y { background: #133322; color: #7ee2a8; }
+.chip.n { background: #3b1b1d; color: #fca5a5; }
+.send { border: 0; border-radius: 14px; padding: 12px; font: 700 14px var(--f-display); background: #2a3348; color: #6c778c; }
+.send.on { background: #3b6cff; color: #fff; }
+
+/* tabel */
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 14px; }
+th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 12px var(--f-mono); color: var(--muted); background: var(--soft); }
+tr:last-child td { border-bottom: 0; }
+td.n { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.y { color: var(--ok); font-weight: 700; } .x { color: var(--muted); }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.card ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.tag { justify-self: start; font: 600 11px/1 var(--f-mono); padding: 5px 8px; border-radius: 999px; }
+.tag.p1 { background: var(--accent-soft); color: var(--accent); }
+.tag.p2 { background: var(--warn-soft); color: var(--warn); }
+.tag.p3 { background: var(--ok-soft); color: var(--ok); }
+.note { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 14px; padding: 14px 18px; font-size: 14px; color: var(--ink); }
+.note b { color: var(--warn); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Rancangan sistem · draf untuk diskusi</div>
+    <h1>LJK Reader Online</h1>
+    <p class="lead">Pengganti mesin scanner OMR: admin di daerah memotret LJK lewat HP dengan pemandu kualitas realtime, server membaca dengan mesin yang sama seperti aplikasi desktop, lalu Anda menarik data ke laptop untuk cek manual dan rekap nilai.</p>
+  </header>
+
+  <section>
+    <h2>Gambaran sistem</h2>
+    <p class="sub">Tiga tempat kerja: HP admin di lapangan, server di VPS Anda, dan laptop Anda. Semua lalu lintas lewat HTTPS. Kunci jawaban hanya ada di laptop.</p>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 1000 540" role="img" aria-label="Arsitektur: HP admin daerah dan panel admin terhubung ke API di VPS; API mengantrekan pembacaan ke worker mesin ljk, menyimpan data di MySQL dan foto di disk; aplikasi desktop menarik data dari API dan menyimpan kunci jawaban secara lokal.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+            <marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3b6cff"/></marker>
+          </defs>
+
+          <text class="zl" x="20" y="40">LAPANGAN</text>
+          <text class="zl" x="780" y="40">LAPTOP ANDA</text>
+
+          <!-- HP admin daerah -->
+          <rect class="box-accent" x="20" y="60" width="220" height="170" rx="14"/>
+          <text class="tb" x="36" y="88">HP admin daerah</text>
+          <text class="tm" x="36" y="106">Web/PWA · Chrome Android</text>
+          <text class="t" x="36" y="136">• pilih kompetisi &amp; bidang</text>
+          <text class="t" x="36" y="158">• kamera + skor kualitas</text>
+          <text class="t" x="36" y="180">• cek realtime (OpenCV.js)</text>
+          <text class="t" x="36" y="202">• antrean offline</text>
+
+          <!-- Panel admin -->
+          <rect class="box" x="20" y="290" width="220" height="140" rx="14"/>
+          <text class="tb" x="36" y="318">Panel admin (Anda)</text>
+          <text class="tm" x="36" y="336">Browser HP / PC</text>
+          <text class="t" x="36" y="364">• akun &amp; hak akses</text>
+          <text class="t" x="36" y="386">• kompetisi, bidang, peserta</text>
+          <text class="t" x="36" y="408">• dashboard kelengkapan</text>
+
+          <!-- VPS -->
+          <rect class="zone" x="300" y="50" width="420" height="470" rx="16"/>
+          <text class="zl" x="316" y="74">VPS · AAPANEL</text>
+          <text class="tm" x="704" y="74" text-anchor="end">Nginx · HTTPS · domain</text>
+
+          <rect class="box" x="330" y="92" width="360" height="130" rx="12"/>
+          <text class="tb" x="346" y="118">API · FastAPI (Python)</text>
+          <text class="t" x="346" y="146">login JWT · cek hak akses per lokasi</text>
+          <text class="t" x="346" y="168">terima unggahan · konfirmasi admin</text>
+          <text class="t" x="346" y="190">sinkron ke desktop · dashboard</text>
+
+          <rect class="box" x="330" y="270" width="150" height="110" rx="12"/>
+          <text class="tb" x="344" y="296">Worker baca</text>
+          <text class="t" x="344" y="318">mesin ljk/</text>
+          <text class="t" x="344" y="338">sama dgn desktop</text>
+          <text class="tm" x="344" y="360">±2 dtk / foto</text>
+
+          <rect class="box" x="540" y="270" width="150" height="110" rx="12"/>
+          <text class="tb" x="554" y="296">MySQL 8</text>
+          <text class="t" x="554" y="318">kompetisi, akun,</text>
+          <text class="t" x="554" y="338">peserta, lembar</text>
+          <text class="tm" x="554" y="360">hasil baca (JSON)</text>
+
+          <rect class="box-soft" x="330" y="420" width="360" height="76" rx="12"/>
+          <text class="tb" x="346" y="448">Disk /data/foto</text>
+          <text class="t" x="346" y="472">foto asli resolusi penuh · ±2 MB per lembar</text>
+
+          <!-- Desktop -->
+          <rect class="box" x="780" y="92" width="200" height="300" rx="14"/>
+          <text class="tb" x="796" y="120">Aplikasi desktop</text>
+          <text class="tm" x="796" y="138">PySide6 · bisa offline</text>
+          <text class="t" x="796" y="166">• tarik data</text>
+          <text class="t" x="796" y="188">• cek manual</text>
+          <text class="t" x="796" y="210">• rekap &amp; ekspor Excel</text>
+          <text class="t" x="796" y="232">• latih model</text>
+          <rect class="box-soft" x="796" y="252" width="168" height="50" rx="8"/>
+          <text class="t" x="808" y="273">SQLite lokal</text>
+          <text class="tm" x="808" y="291">salinan kerja</text>
+          <rect class="box-accent" x="796" y="314" width="168" height="62" rx="8"/>
+          <text class="ta" x="808" y="337">Kunci jawaban</text>
+          <text class="tm" x="808" y="356">tidak pernah dikirim</text>
+          <text class="tm" x="808" y="370">ke server</text>
+
+          <!-- panah lapangan <-> API -->
+          <line class="edge-a" x1="240" y1="120" x2="326" y2="120" marker-end="url(#ara)" style="color:#3b6cff"/>
+          <text class="tl" x="283" y="112" text-anchor="middle">unggah foto</text>
+          <line class="edge" x1="330" y1="180" x2="244" y2="180" marker-end="url(#ar)"/>
+          <text class="tl" x="287" y="198" text-anchor="middle">hasil baca</text>
+          <polyline class="edge" points="240,360 272,360 272,205 326,205" marker-end="url(#ar)"/>
+          <text class="tl" x="264" y="285" text-anchor="middle" transform="rotate(-90 264 285)">kelola &amp; pantau</text>
+
+          <!-- di dalam VPS -->
+          <line class="edge" x1="380" y1="222" x2="380" y2="266" marker-end="url(#ar)"/>
+          <text class="tl" x="374" y="249" text-anchor="end">antre</text>
+          <line class="edge" x1="440" y1="270" x2="440" y2="226" marker-end="url(#ar)"/>
+          <text class="tl" x="446" y="249">hasil</text>
+          <line class="edge" x1="615" y1="222" x2="615" y2="266" marker-end="url(#ar)"/>
+          <text class="tl" x="622" y="249">simpan / ambil</text>
+          <line class="edge" x1="510" y1="222" x2="510" y2="416" marker-end="url(#ar)"/>
+          <text class="tl" x="503" y="400" text-anchor="middle" transform="rotate(-90 503 400)">simpan foto</text>
+          <line class="edge" x1="405" y1="420" x2="405" y2="384" marker-end="url(#ar)"/>
+          <text class="tl" x="412" y="406">baca foto</text>
+
+          <!-- API <-> desktop -->
+          <line class="edge" x1="690" y1="130" x2="776" y2="130" marker-end="url(#ar)"/>
+          <text class="tl" x="733" y="122" text-anchor="middle">tarik data</text>
+          <line class="edge" x1="780" y1="190" x2="694" y2="190" marker-end="url(#ar)"/>
+          <text class="tl" x="737" y="208" text-anchor="middle">status dicek</text>
+        </svg>
+      </div>
+      <figcaption>Pembacaan hanya dilakukan di server dengan mesin <code>ljk/</code> yang sama seperti di desktop, jadi tidak ada dua versi pembaca yang bisa berbeda hasil. HP hanya menilai kualitas foto. Panah biru adalah jalur utama data masuk.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Alur satu lembar LJK</h2>
+    <p class="sub">Ada tiga kali pengecekan: kualitas foto di HP, konfirmasi oleh admin yang memegang kertas aslinya, lalu cek manual oleh Anda untuk lembar yang ditandai.</p>
+    <ol class="steps">
+      <li><span class="lane">HP</span><h3>Pilih kompetisi &amp; bidang</h3><p>Hanya kompetisi dan lokasi yang menjadi hak akses admin tersebut yang muncul.</p></li>
+      <li><span class="lane">HP</span><h3>Arahkan kamera</h3><p>Skor kualitas dan saran berubah langsung: cahaya, fokus, jarak, 4 sudut, silau.</p></li>
+      <li><span class="lane">HP</span><h3>Foto otomatis</h3><p>Saat skor ≥ 90% dan stabil sekitar 1 detik, HP mengambil foto resolusi penuh, bukan potongan video.</p></li>
+      <li><span class="lane">HP</span><h3>Kirim atau antre</h3><p>Kalau sinyal hilang, foto disimpan di HP dan dikirim otomatis begitu sinyal kembali.</p></li>
+      <li><span class="lane srv">Server</span><h3>Simpan &amp; baca</h3><p>Cek ulang kualitas, baca bulatan, cocokkan nomor peserta dengan daftar, cari duplikat.</p></li>
+      <li><span class="lane">HP</span><h3>Admin konfirmasi</h3><p>"BUDI SANTOSO · 10001 · kode 301 · 40 jawaban". Admin memilih Benar, Perbaiki, atau Peserta baru.</p></li>
+      <li><span class="lane dsk">Desktop</span><h3>Tarik, cek, rekap</h3><p>Lembar masuk ke Cek Manual seperti sekarang. Nilai dihitung di laptop dengan kunci jawaban.</p></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Pemandu kamera di HP</h2>
+    <p class="sub">Contoh tampilan untuk tiga kondisi. Tombol kirim hanya aktif kalau semua syarat terpenuhi.</p>
+    <div class="phones">
+      <div class="phone">
+        <div class="ph-top"><span>FSN 2026 · Matematika</span><span>Padang</span></div>
+        <div class="view dark"><div class="sheet"><i class="corner c1"></i><i class="corner c2"></i><i class="corner c3"></i><i class="corner c4"></i></div><div class="frame"></div>
+          <div class="score" style="--p:41; --c:#f87171"><span>41%</span></div></div>
+        <div class="chips"><span class="chip n">cahaya</span><span class="chip n">fokus</span><span class="chip y">4 sudut</span><span class="chip y">jarak</span><span class="chip y">silau</span></div>
+        <div class="tip"><b>Terlalu gelap</b>Cari tempat yang lebih terang atau nyalakan senter.</div>
+        <button class="send" type="button" disabled>Kirim</button>
+      </div>
+      <div class="phone">
+        <div class="ph-top"><span>FSN 2026 · Matematika</span><span>Padang</span></div>
+        <div class="view far"><div class="sheet"><i class="corner c1"></i><i class="corner c2"></i><i class="corner c3"></i><i class="corner c4"></i></div><div class="frame"></div>
+          <div class="score" style="--p:58; --c:#fbbf24"><span>58%</span></div></div>
+        <div class="chips"><span class="chip y">cahaya</span><span class="chip y">fokus</span><span class="chip y">4 sudut</span><span class="chip n">jarak</span><span class="chip y">silau</span></div>
+        <div class="tip"><b>Kertas terlalu jauh</b>Dekatkan HP sampai kertas memenuhi bingkai.</div>
+        <button class="send" type="button" disabled>Kirim</button>
+      </div>
+      <div class="phone">
+        <div class="ph-top"><span>FSN 2026 · Matematika</span><span>Padang</span></div>
+        <div class="view ok"><div class="sheet"><i class="corner c1"></i><i class="corner c2"></i><i class="corner c3"></i><i class="corner c4"></i></div><div class="frame"></div>
+          <div class="score" style="--p:96; --c:#4ade80"><span>96%</span></div></div>
+        <div class="chips"><span class="chip y">cahaya</span><span class="chip y">fokus</span><span class="chip y">4 sudut</span><span class="chip y">jarak</span><span class="chip y">silau</span></div>
+        <div class="tip"><b>Siap</b>Tahan sebentar, foto diambil otomatis.</div>
+        <button class="send on" type="button">Kirim</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Cara menghitung skor kualitas</h2>
+    <p class="sub">Skor dibentuk dari ukuran yang bisa dicek, bukan tebakan. Kalau satu syarat wajib gagal, skor ditahan di bawah 60% (seperti contoh kertas terlalu jauh di atas). Angka bobot di bawah masih usulan dan akan disetel dari foto uji.</p>
+    <div class="two">
+      <div class="tbl"><table>
+        <thead><tr><th>Syarat wajib</th><th>Batas</th></tr></thead>
+        <tbody>
+          <tr><td>4 kotak hitam sudut terdeteksi</td><td class="n">4 / 4</td></tr>
+          <tr><td>Kertas memenuhi bingkai</td><td class="n">≥ 70%</td></tr>
+          <tr><td>Kemiringan kertas</td><td class="n">&lt; 15°</td></tr>
+          <tr><td>Garis tepi kiri (patokan baris) utuh</td><td class="n">tidak terpotong</td></tr>
+        </tbody></table></div>
+      <div class="tbl"><table>
+        <thead><tr><th>Nilai tambahan</th><th>Bobot</th></tr></thead>
+        <tbody>
+          <tr><td>Ketajaman (fokus, tidak goyang)</td><td class="n">30</td></tr>
+          <tr><td>Kecerahan cukup</td><td class="n">25</td></tr>
+          <tr><td>Tidak ada pantulan / silau</td><td class="n">20</td></tr>
+          <tr><td>Bayangan merata</td><td class="n">15</td></tr>
+          <tr><td>HP diam (stabil)</td><td class="n">10</td></tr>
+        </tbody></table></div>
+    </div>
+    <p>Server lalu menambah angka kedua, yaitu <b>keyakinan baca</b>: berapa bulatan yang ragu dan seberapa pas pelurusannya. Kedua angka ditampilkan terpisah di desktop. Foto yang bagus belum tentu terbaca sempurna, misalnya kalau peserta mengisi dengan tipis.</p>
+  </section>
+
+  <section>
+    <h2>Perjalanan status lembar</h2>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 1000 300" role="img" aria-label="Status lembar: diambil di HP, antre bila offline, terkirim, dibaca server, lalu dikonfirmasi admin, ditandai, atau gagal baca yang kembali ke foto ulang; lembar yang dikonfirmasi atau ditandai ditarik ke desktop.">
+          <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+          <rect class="box" x="20" y="110" width="130" height="44" rx="22"/><text class="t" x="85" y="137" text-anchor="middle">Diambil di HP</text>
+          <rect class="box" x="180" y="110" width="130" height="44" rx="22"/><text class="t" x="245" y="137" text-anchor="middle">Antre (offline)</text>
+          <rect class="box" x="340" y="110" width="110" height="44" rx="22"/><text class="t" x="395" y="137" text-anchor="middle">Terkirim</text>
+          <rect class="box" x="480" y="110" width="130" height="44" rx="22"/><text class="t" x="545" y="137" text-anchor="middle">Dibaca server</text>
+          <rect class="pill-ok" x="660" y="30" width="170" height="44" rx="22"/><text class="t-ok" x="745" y="57" text-anchor="middle">Dikonfirmasi admin</text>
+          <rect class="pill-warn" x="660" y="110" width="170" height="44" rx="22"/><text class="t-warn" x="745" y="137" text-anchor="middle">Ditandai / peserta baru</text>
+          <rect class="pill-err" x="660" y="190" width="170" height="44" rx="22"/><text class="t-err" x="745" y="217" text-anchor="middle">Gagal baca</text>
+          <rect class="box-accent" x="860" y="110" width="120" height="44" rx="22"/><text class="ta" x="920" y="137" text-anchor="middle">Ditarik desktop</text>
+          <text class="tm" x="920" y="178" text-anchor="middle">→ cek manual</text>
+          <text class="tm" x="920" y="194" text-anchor="middle">→ rekap nilai</text>
+
+          <line class="edge" x1="150" y1="132" x2="176" y2="132" marker-end="url(#ar2)"/>
+          <line class="edge" x1="310" y1="132" x2="336" y2="132" marker-end="url(#ar2)"/>
+          <text class="tl" x="323" y="100" text-anchor="middle">sinyal ada</text>
+          <line class="edge" x1="450" y1="132" x2="476" y2="132" marker-end="url(#ar2)"/>
+          <line class="edge" x1="610" y1="122" x2="656" y2="58" marker-end="url(#ar2)"/>
+          <line class="edge" x1="610" y1="132" x2="656" y2="132" marker-end="url(#ar2)"/>
+          <line class="edge" x1="610" y1="142" x2="656" y2="206" marker-end="url(#ar2)"/>
+          <line class="edge" x1="830" y1="58" x2="866" y2="114" marker-end="url(#ar2)"/>
+          <line class="edge" x1="830" y1="132" x2="856" y2="132" marker-end="url(#ar2)"/>
+          <polyline class="edge-d" points="745,234 745,276 85,276 85,158" marker-end="url(#ar2)"/>
+          <text class="tl" x="415" y="268" text-anchor="middle">foto ulang (admin diberi tahu alasannya)</text>
+        </svg>
+      </div>
+      <figcaption>Lembar "gagal baca" tidak pernah sampai ke desktop. Admin diminta memotret ulang selagi kertas aslinya masih di tangan. Lembar yang ditandai tetap ditarik, tapi langsung masuk antrean Cek Manual.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Struktur database (MySQL 8)</h2>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 1000 540" role="img" aria-label="Tabel database: kompetisi memiliki banyak lokasi dan bidang; lokasi memiliki banyak akses, peserta, dan lembar; users terhubung ke lokasi lewat akses dan mengunggah lembar; lembar merujuk bidang dan peserta.">
+          <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+          <!-- kompetisi -->
+          <rect class="box" x="20" y="20" width="200" height="106" rx="10"/><path class="head" d="M30 20 h180 a10 10 0 0 1 10 10 v16 h-200 v-16 a10 10 0 0 1 10 -10 z"/>
+          <text class="th" x="34" y="38">kompetisi</text>
+          <text class="fk" x="34" y="66">id</text><text class="f" x="34" y="84">nama</text><text class="f" x="34" y="102">tanggal</text><text class="f" x="34" y="120">status</text>
+          <!-- lokasi -->
+          <rect class="box" x="270" y="20" width="200" height="106" rx="10"/><path class="head" d="M280 20 h180 a10 10 0 0 1 10 10 v16 h-200 v-16 a10 10 0 0 1 10 -10 z"/>
+          <text class="th" x="284" y="38">lokasi</text>
+          <text class="fk" x="284" y="66">id</text><text class="fk" x="284" y="84">kompetisi_id</text><text class="f" x="284" y="102">kota</text><text class="f" x="284" y="120">target_lembar</text>
+          <!-- akses -->
+          <rect class="box" x="520" y="20" width="200" height="70" rx="10"/><path class="head" d="M530 20 h180 a10 10 0 0 1 10 10 v16 h-200 v-16 a10 10 0 0 1 10 -10 z"/>
+          <text class="th" x="534" y="38">akses</text>
+          <text class="fk" x="534" y="66">user_id</text><text class="fk" x="534" y="84">lokasi_id</text>
+          <!-- users -->
+          <rect class="box" x="770" y="20" width="210" height="124" rx="10"/><path class="head" d="M780 20 h190 a10 10 0 0 1 10 10 v16 h-210 v-16 a10 10 0 0 1 10 -10 z"/>
+          <text class="th" x="784" y="38">users</text>
+          <text class="fk" x="784" y="66">id</text><text class="f" x="784" y="84">nama</text><text class="f" x="784" y="102">username</text><text class="f" x="784" y="120">password_hash</text><text class="f" x="784" y="138">peran</text>
+          <!-- bidang -->
+          <rect class="box" x="20" y="250" width="200" height="142" rx="10"/><path class="head" d="M30 250 h180 a10 10 0 0 1 10 10 v16 h-200 v-16 a10 10 0 0 1 10 -10 z"/>
+          <text class="th" x="34" y="268">bidang</text>
+          <text class="fk" x="34" y="296">id</text><text class="fk" x="34" y="314">kompetisi_id</text><text class="f" x="34" y="332">kode_naskah</text><text class="f" x="34" y="350">nama</text><text class="f" x="34" y="368">jumlah_soal</text><text class="fn" x="34" y="386">tanpa kunci</text>
+          <!-- peserta -->
+          <rect class="box" x="270" y="250" width="200" height="160" rx="10"/><path class="head" d="M280 250 h180 a10 10 0 0 1 10 10 v16 h-200 v-16 a10 10 0 0 1 10 -10 z"/>
+          <text class="th" x="284" y="268">peserta</text>
+          <text class="fk" x="284" y="296">id</text><text class="fk" x="284" y="314">kompetisi_id</text><text class="fk" x="284" y="332">lokasi_id</text><text class="f" x="284" y="350">nomor</text><text class="f" x="284" y="368">nama</text><text class="f" x="284" y="386">sekolah</text><text class="f" x="284" y="404">daftar_di_tempat</text>
+          <!-- lembar -->
+          <rect class="box-accent" x="520" y="250" width="240" height="268" rx="10"/><path class="head" d="M530 250 h220 a10 10 0 0 1 10 10 v16 h-240 v-16 a10 10 0 0 1 10 -10 z"/>
+          <text class="th" x="534" y="268">lembar</text>
+          <text class="fk" x="534" y="296">id</text><text class="fk" x="534" y="314">lokasi_id</text><text class="fk" x="534" y="332">bidang_id</text><text class="fk" x="534" y="350">peserta_id</text><text class="fk" x="534" y="368">uploader_id</text>
+          <text class="f" x="534" y="386">foto_path · foto_hash</text><text class="f" x="534" y="404">skor_kualitas</text><text class="f" x="534" y="422">metrik (JSON)</text><text class="f" x="534" y="440">hasil_baca (JSON)</text><text class="f" x="534" y="458">keyakinan_baca</text><text class="f" x="534" y="476">status</text><text class="f" x="534" y="494">konfirmasi_admin</text><text class="f" x="534" y="512">dibuat · ditarik</text>
+
+          <!-- relasi -->
+          <line class="edge" x1="220" y1="72" x2="266" y2="72" marker-end="url(#ar3)"/><text class="tl" x="243" y="64" text-anchor="middle">1:n</text>
+          <line class="edge" x1="470" y1="72" x2="516" y2="72" marker-end="url(#ar3)"/><text class="tl" x="493" y="64" text-anchor="middle">1:n</text>
+          <line class="edge" x1="770" y1="72" x2="724" y2="72" marker-end="url(#ar3)"/><text class="tl" x="747" y="64" text-anchor="middle">1:n</text>
+          <line class="edge" x1="120" y1="126" x2="120" y2="246" marker-end="url(#ar3)"/><text class="tl" x="128" y="190">1:n</text>
+          <line class="edge" x1="370" y1="126" x2="370" y2="246" marker-end="url(#ar3)"/><text class="tl" x="378" y="190">1:n</text>
+          <line class="edge" x1="450" y1="126" x2="580" y2="246" marker-end="url(#ar3)"/><text class="tl" x="530" y="190">1:n</text>
+          <line class="edge" x1="470" y1="330" x2="516" y2="330" marker-end="url(#ar3)"/><text class="tl" x="493" y="322" text-anchor="middle">1:n</text>
+          <polyline class="edge" points="120,392 120,505 516,505" marker-end="url(#ar3)"/><text class="tl" x="318" y="497" text-anchor="middle">1:n</text>
+          <polyline class="edge" points="875,144 875,368 764,368" marker-end="url(#ar3)"/><text class="tl" x="883" y="260">mengunggah</text>
+        </svg>
+      </div>
+      <figcaption>Tabel <code>bidang</code> di server hanya berisi kode naskah dan jumlah soal, tanpa kunci jawaban. Panah menunjuk ke sisi "banyak". Hak akses diberikan per lokasi, sehingga admin Padang tidak melihat data Pekanbaru.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Hak akses</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Kemampuan</th><th>Superadmin (Anda)</th><th>Admin daerah</th></tr></thead>
+      <tbody>
+        <tr><td>Buat, ubah, hapus kompetisi, lokasi, bidang</td><td class="y">ya</td><td class="x">tidak</td></tr>
+        <tr><td>Buat akun admin dan atur lokasinya</td><td class="y">ya</td><td class="x">tidak</td></tr>
+        <tr><td>Impor daftar peserta</td><td class="y">ya</td><td class="x">tidak</td></tr>
+        <tr><td>Scan &amp; kirim LJK</td><td class="y">ya</td><td>hanya lokasi miliknya</td></tr>
+        <tr><td>Daftarkan peserta baru di hari H</td><td>setujui</td><td>ajukan</td></tr>
+        <tr><td>Lihat dashboard kelengkapan</td><td>semua lokasi</td><td>lokasi miliknya</td></tr>
+        <tr><td>Lihat nilai &amp; kunci jawaban</td><td>di desktop</td><td class="x">tidak</td></tr>
+      </tbody></table></div>
+  </section>
+
+  <section>
+    <h2>Tahap pengerjaan</h2>
+    <div class="two">
+      <div class="card"><span class="tag p1">Tahap 1</span><h3>Jalur data jadi</h3><ul>
+        <li>Server: API, login, MySQL, simpan foto, worker baca</li>
+        <li>Panel admin: akun, kompetisi, lokasi, bidang, peserta</li>
+        <li>HP: pilih kompetisi, ambil foto, lihat hasil, konfirmasi</li>
+        <li>Desktop: tombol Tarik data</li></ul>
+        <p class="sub">Kirim lewat GDrive tidak dipakai lagi.</p></div>
+      <div class="card"><span class="tag p2">Tahap 2</span><h3>Pemandu kamera</h3><ul>
+        <li>Prototipe di 2–3 HP admin yang sebenarnya</li>
+        <li>Skor kualitas realtime dengan saran</li>
+        <li>Foto otomatis saat skor stabil</li>
+        <li>Antrean offline</li></ul></div>
+      <div class="card"><span class="tag p3">Tahap 3</span><h3>Kendali penuh</h3><ul>
+        <li>Validasi nomor peserta ke daftar, deteksi duplikat</li>
+        <li>Peserta baru di hari H dan persetujuannya</li>
+        <li>Dashboard kelengkapan per lokasi</li>
+        <li>Laporan keyakinan baca di desktop</li></ul></div>
+    </div>
+  </section>
+
+  <div class="note"><b>Masih perlu dipastikan:</b> rancangan ini menganggap satu kompetisi bisa berlangsung di beberapa kota, masing-masing dengan adminnya sendiri, sehingga hak akses diberikan per lokasi. Kalau ternyata satu kompetisi selalu di satu kota, tabel <code>lokasi</code> bisa dilebur ke <code>kompetisi</code>.</div>
+</div>
+</body>
+</html>
