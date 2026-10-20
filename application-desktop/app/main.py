@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 from PySide6.QtCore import QStandardPaths, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
+from app import theme  # noqa: E402
 from app.window import MainWindow  # noqa: E402
 from ljk import belajar as BL  # noqa: E402
 from ljk.db import DB  # noqa: E402
@@ -81,6 +82,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("LJK Reader")
+    theme.apply(save=False)
     d = data_dir()
     d.mkdir(parents=True, exist_ok=True)
     moved_from = migrate(d)

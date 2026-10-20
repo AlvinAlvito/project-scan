@@ -1,15 +1,19 @@
-"""Pewarnaan sel tabel yang tetap terbaca di tema terang maupun gelap Windows."""
+"""Pewarnaan sel tabel menurut "tone" tema (ok, warn, error, info, chosen), ikut berganti saat tema berganti."""
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 
-DARK_TEXT = QColor(25, 25, 25)
+from app import theme
 
 
-def paint(item, color):
-    """Beri latar warna (teks dibuat gelap); color=None -> kembali ke warna tema."""
-    if color is None:
-        item.setData(Qt.BackgroundRole, None)
+def paint(item, tone):
+    """Beri warna penanda pada sel; tone=None -> kembali ke warna tema."""
+    item.setData(theme.TONE_ROLE, tone)
+    repaint(item)
+
+
+def repaint(item):
+    """Warna teks dari tone; latarnya digambar oleh app.widgets.ToneDelegate."""
+    tone = item.data(theme.TONE_ROLE)
+    if not tone:
         item.setData(Qt.ForegroundRole, None)
-    else:
-        item.setBackground(color)
-        item.setForeground(DARK_TEXT)
+        return
+    item.setForeground(theme.tone(tone)[1])

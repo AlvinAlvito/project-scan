@@ -3,21 +3,24 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
-                               QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QScrollArea, QSplitter,
+                               QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from app import theme
 from app.colors import paint
 from app.imageview import ImageView
+from app.widgets import EmptyState, badge, set_badge, setup_table, toolbar
 from ljk import nilai as NI
 from ljk import service as SV
 
 CHOICES = [("", "-"), ("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"), ("*", "ganda")]
-KIND_COLOR = {"ragu": QColor(255, 216, 168), "ganda": QColor(255, 179, 179)}
-HW_ORDER = [("kotak_nama", "Nama (kotak)"), ("kotak_nomor", "Nomor"), ("kotak_kode", "Kode"),
+KIND_TONE = {"ragu": "warn", "ganda": "error"}
+STATUS_TONE = {"OK": "ok", "Perlu cek": "warn", "Sudah dicek": "info", "Gagal": "error"}
+HW_ORDER = [("kotak_nama", "Nama"), ("kotak_nomor", "Nomor"), ("kotak_kode", "Kode"),
             ("kotak_tanggal", "Tanggal"), ("bidang", "Bidang"), ("sekolah", "Sekolah"), ("kelas", "Kelas"),
-            ("hp", "No. HP/WA")]
+            ("hp", "HP/WA")]
 HW_MAKS = (460, 56)     # ukuran tampil maksimum potongan tulisan tangan (lebar, tinggi)
 
 
@@ -36,37 +39,50 @@ class ReviewTab(QWidget):
         self.dirty = False
         self._loading = False
 
-        v = QVBoxLayout(self)
-        nav = QHBoxLayout()
-        self.btn_prev = QPushButton("< Sebelumnya")
-        self.btn_prev.clicked.connect(lambda: self._step(-1))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.page = QWidget()
+        v = QVBoxLayout(self.page)
+        v.setContentsMargins(0, 18, 0, 0)
+        v.setSpacing(14)
+        nav = toolbar()
+        self.btn_prev = theme.button("", "chevron-left", "icon", "Lembar sebelumnya", lambda: self._step(-1))
         self.picker = QComboBox()
         self.picker.setMinimumWidth(420)
         self.picker.activated.connect(lambda i: self.show_lembar(self.ids[i]))
-        self.btn_next = QPushButton("Berikutnya >")
-        self.btn_next.clicked.connect(lambda: self._step(1))
-        self.only_check = QCheckBox("Lompat hanya ke yang perlu cek")
+        self.btn_next = theme.button("", "chevron-right", "icon", "Lembar berikutnya", lambda: self._step(1))
+        self.only_check = QCheckBox("Lompat ke yang perlu cek saja")
         self.only_check.setChecked(True)
-        for w in (self.btn_prev, self.picker, self.btn_next, self.only_check):
+        for w in (self.btn_prev, self.picker, self.btn_next):
             nav.addWidget(w)
+        nav.addSpacing(10)
+        nav.addWidget(self.only_check)
         nav.addStretch()
-        self.status_label = QLabel("")
+        self.dirty_badge = badge("Belum disimpan", "warn")
+        self.dirty_badge.setVisible(False)
+        self.status_label = badge("", "neutral")
+        self.status_label.setVisible(False)
+        nav.addWidget(self.dirty_badge)
         nav.addWidget(self.status_label)
         v.addLayout(nav)
 
         split = QSplitter(Qt.Horizontal)
+        split.setChildrenCollapsible(False)
         # kiri: gambar
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(10)
         self.view = ImageView()
-        zb = QHBoxLayout()
-        for text, fn in (("Muat layar", lambda: self.view.fit()), ("Perbesar", lambda: self.view.zoom(1.25)),
-                         ("Perkecil", lambda: self.view.zoom(0.8))):
-            b = QPushButton(text)
-            b.clicked.connect(fn)
-            zb.addWidget(b)
+        zb = toolbar(6)
+        for ic, tip, fn in (("maximize", "Muat layar", lambda: self.view.fit()),
+                            ("zoom-in", "Perbesar (roda mouse)", lambda: self.view.zoom(1.25)),
+                            ("zoom-out", "Perkecil (roda mouse)", lambda: self.view.zoom(0.8))):
+            zb.addWidget(theme.button("", ic, "icon", tip, fn))
         zb.addStretch()
+        hint = QLabel("Seret untuk menggeser · roda mouse untuk zoom")
+        hint.setProperty("role", "muted")
+        zb.addWidget(hint)
         lv.addLayout(zb)
         lv.addWidget(self.view)
         split.addWidget(left)
@@ -74,10 +90,14 @@ class ReviewTab(QWidget):
         # kanan: data
         right = QWidget()
         rv = QVBoxLayout(right)
-        g_issue = QGroupBox("Hal yang perlu dicek (klik untuk melihat di gambar)")
+        rv.setContentsMargins(4, 0, 8, 0)
+        rv.setSpacing(4)
+        g_issue = QGroupBox("Catatan")
+        g_issue.setToolTip("Klik catatan untuk melihat lokasinya di gambar")
         gl = QVBoxLayout(g_issue)
         self.issues = QListWidget()
-        self.issues.setMaximumHeight(130)
+        self.issues.setMaximumHeight(140)
+        self.issues.setWordWrap(True)
         self.issues.itemClicked.connect(self._issue_clicked)
         gl.addWidget(self.issues)
         rv.addWidget(g_issue)
@@ -89,8 +109,9 @@ class ReviewTab(QWidget):
         self.f_kode.setEditable(True)
         self.f_bidang = QLabel("")
         self.read_lbl = {k: QLabel("") for k in ("nama", "nomor", "kode", "tanggal")}
+        form.setSpacing(8)
         for lbl in self.read_lbl.values():
-            lbl.setStyleSheet("color: gray")
+            lbl.setProperty("role", "muted")
         for key, label, w in (("nama", "Nama", self.f_nama), ("nomor", "Nomor peserta", self.f_nomor),
                               ("kode", "Kode naskah", self.f_kode), ("tanggal", "Tanggal", self.f_tanggal)):
             form.addRow(label, w)
@@ -101,8 +122,10 @@ class ReviewTab(QWidget):
         self.f_kode.currentTextChanged.connect(self._kode_changed)
         rv.addWidget(g_data)
 
-        g_hw = QGroupBox("Tulisan tangan (pembanding dan konfirmasi dengan peserta)")
+        g_hw = QGroupBox("Tulisan tangan")
+        g_hw.setToolTip("Pembanding dan konfirmasi dengan peserta")
         self.hw_layout = QFormLayout(g_hw)
+        self.hw_layout.setSpacing(8)
         self.hw_labels = {}
         for key, label in HW_ORDER:
             lb = QLabel()
@@ -113,29 +136,31 @@ class ReviewTab(QWidget):
 
         g_ans = QGroupBox("Jawaban")
         al = QVBoxLayout(g_ans)
+        al.setSpacing(10)
+        top = toolbar()
         self.score_lbl = QLabel("")
-        self.score_lbl.setStyleSheet("font-weight: bold; font-size: 11pt")
-        al.addWidget(self.score_lbl)
-        self.only_bad = QCheckBox("Hanya soal ragu/ganda")
+        top.addWidget(self.score_lbl)
+        top.addStretch()
+        self.only_bad = QCheckBox("Ragu/ganda saja")
         self.only_bad.toggled.connect(self._filter_answers)
-        al.addWidget(self.only_bad)
+        top.addWidget(self.only_bad)
+        al.addLayout(top)
         self.ans = QTableWidget(0, 5)
-        self.ans.setHorizontalHeaderLabels(["Soal", "Terbaca", "Jawaban akhir", "Kunci", "Hasil"])
-        self.ans.verticalHeader().setVisible(False)
+        self.ans.setHorizontalHeaderLabels(["No", "Terbaca", "Jawaban", "Kunci", "Hasil"])
+        setup_table(self.ans, 36)
         self.ans.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.ans.setSelectionBehavior(QTableWidget.SelectRows)
         self.ans.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.ans.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.ans.setMinimumHeight(260)
         self.ans.cellClicked.connect(self._answer_clicked)
         al.addWidget(self.ans)
         rv.addWidget(g_ans, 1)
 
-        btns = QHBoxLayout()
-        self.btn_reset = QPushButton("Kembalikan ke hasil baca")
-        self.btn_reset.clicked.connect(self._reset)
-        self.btn_save = QPushButton("Simpan && tandai sudah dicek  (Ctrl+Enter)")
-        self.btn_save.setStyleSheet("font-weight: bold; padding: 6px")
-        self.btn_save.clicked.connect(self._save)
+        rv.addSpacing(8)
+        btns = toolbar()
+        self.btn_reset = theme.button("Kembalikan", "undo", "ghost", "Kembalikan ke hasil baca awal", self._reset)
+        self.btn_save = theme.button("Simpan && tandai dicek", "check", "primary", "Ctrl+Enter",
+                                     lambda: self._save())
         btns.addWidget(self.btn_reset)
         btns.addStretch()
         btns.addWidget(self.btn_save)
@@ -146,9 +171,16 @@ class ReviewTab(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(right)
         split.addWidget(scroll)
-        right.setMinimumWidth(560)
-        split.setSizes([760, 740])
+        right.setMinimumWidth(520)
+        split.setSizes([760, 640])
         v.addWidget(split, 1)
+
+        self.empty = EmptyState("clipboard-check", "Belum ada lembar untuk dicek",
+                                "Lembar hasil scan akan muncul di sini.")
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty)
+        self.stack.addWidget(self.page)
+        outer.addWidget(self.stack)
         self._enable(False)
 
     # ---------------------------------------------------------------- daftar
@@ -233,6 +265,7 @@ class ReviewTab(QWidget):
         if row is None:
             return
         self.cur = row
+        self.stack.setCurrentWidget(self.page)
         self.baca = json.loads(row["baca"] or "{}")
         self.answers = json.loads(row["jawaban"] or "[]") or [""] * 180
         if lembar_id in self.ids:
@@ -246,7 +279,7 @@ class ReviewTab(QWidget):
         for k, lbl in self.read_lbl.items():
             # Tanggal tidak wajib terbaca: tidak perlu menarik perhatian pemeriksa.
             differs = k != "tanggal" and self.baca.get(k, "") != row[k]
-            lbl.setText(f"terbaca dari bulatan: {self.baca.get(k, '')}" if differs else "")
+            lbl.setText(f"terbaca: {self.baca.get(k, '')}" if differs else "")
             lbl.setVisible(differs)
         self._loading = False
         pot = json.loads(row["potongan"] or "{}")
@@ -277,7 +310,9 @@ class ReviewTab(QWidget):
         self.view.set_image(None)
         self.issues.clear()
         self.ans.setRowCount(0)
-        self.status_label.setText("")
+        self.status_label.setVisible(False)
+        self.dirty_badge.setVisible(False)
+        self.stack.setCurrentWidget(self.empty)
         self._enable(False)
 
     def _enable(self, on):
@@ -288,8 +323,8 @@ class ReviewTab(QWidget):
         if self.cur is None:
             return
         st = self.status.get(self.cur["id"], "")
-        self.status_label.setText(f"Status: <b>{st}</b>" + ("  <span style='color:#c0392b'>(belum disimpan)</span>"
-                                                          if self.dirty else ""))
+        set_badge(self.status_label, st, STATUS_TONE.get(st, "neutral"))
+        self.dirty_badge.setVisible(self.dirty)
 
     def _soal(self):
         kode = self.f_kode.currentText().strip()
@@ -300,8 +335,8 @@ class ReviewTab(QWidget):
 
     def _update_kode_label(self):
         s = self._soal()
-        self.f_bidang.setText(f"{s.bidang} ({s.jumlah} soal)" if s else
-                              "<span style='color:#c0392b'>kode naskah belum terdaftar di kunci</span>")
+        self.f_bidang.setText(f"{s.bidang} · {s.jumlah} soal" if s else
+                              f"<span style='color:{theme.tone_hex('error')[1]}'>kode naskah belum terdaftar</span>")
 
     def _fill_issues(self):
         self.issues.clear()
@@ -343,9 +378,9 @@ class ReviewTab(QWidget):
             shown = {"": "-", "?": "ragu", "*": "ganda"}.get(raw, raw)
             ri = QTableWidgetItem(shown)
             ri.setTextAlignment(Qt.AlignCenter)
-            if kind in KIND_COLOR:
+            if kind in KIND_TONE:
                 for it in (num, ri):
-                    paint(it, KIND_COLOR[kind])
+                    paint(it, KIND_TONE[kind])
             self.ans.setItem(q, 0, num)
             self.ans.setItem(q, 1, ri)
             combo = QComboBox()
@@ -358,7 +393,9 @@ class ReviewTab(QWidget):
             ki = QTableWidgetItem(s.kunci[q] if s and q < s.jumlah else "")
             ki.setTextAlignment(Qt.AlignCenter)
             self.ans.setItem(q, 3, ki)
-            self.ans.setItem(q, 4, QTableWidgetItem(""))
+            res = QTableWidgetItem("")
+            res.setTextAlignment(Qt.AlignCenter)
+            self.ans.setItem(q, 4, res)
         self._update_results()
         self._filter_answers()
 
@@ -369,21 +406,29 @@ class ReviewTab(QWidget):
             if s is None or q >= s.jumlah:
                 txt, col = "", None
             elif a == "*":
-                txt, col = "salah (ganda)", QColor(255, 179, 179)
+                txt, col = "salah (ganda)", "error"
             elif a == "":
                 txt, col = "kosong", None
             elif a == s.kunci[q]:
-                txt, col = "benar", QColor(212, 237, 218)
+                txt, col = "benar", "ok"
             else:
-                txt, col = "salah", QColor(248, 215, 218)
+                txt, col = "salah", "error"
             it = self.ans.item(q, 4)
             it.setText(txt)
             paint(it, col)
         if s:
             sk = NI.nilai(self.answers, s)
-            self.score_lbl.setText(f"B {sk.benar}  |  S {sk.salah}  |  K {sk.kosong}  |  Nilai {sk.nilai}")
+            ok, err, mut = theme.tone_hex("ok")[1], theme.tone_hex("error")[1], theme.c("muted")
+            self.score_lbl.setText(
+                f"<span style='font-size:15pt; font-weight:700'>{sk.nilai}</span>"
+                f"<span style='color:{mut}'>&nbsp; nilai &nbsp;·&nbsp; </span>"
+                f"<span style='color:{ok}; font-weight:600'>{sk.benar} benar</span>"
+                f"<span style='color:{mut}'> &nbsp;·&nbsp; </span>"
+                f"<span style='color:{err}; font-weight:600'>{sk.salah} salah</span>"
+                f"<span style='color:{mut}'> &nbsp;·&nbsp; {sk.kosong} kosong</span>")
         else:
-            self.score_lbl.setText("Nilai: kode naskah belum terdaftar")
+            self.score_lbl.setText(f"<span style='color:{theme.c('muted')}'>Nilai belum bisa dihitung: "
+                                   "kode naskah belum terdaftar</span>")
 
     def _filter_answers(self):
         kinds = self.baca.get("jawaban_kind", [])

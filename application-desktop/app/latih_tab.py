@@ -10,14 +10,21 @@ import cv2
 from PySide6.QtCore import QProcess, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
-                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
+from app import theme
+from app.widgets import EmptyState, divider, toolbar
 from ljk import belajar as BL
 
 ROOT = Path(__file__).resolve().parents[1]
 KOLOM, BARIS = 5, 3
 TOMBOL = {Qt.Key_1: "terisi", Qt.Key_2: "kosong", Qt.Key_3: "hapusan"}
-WARNA = {"terisi": "#2e9d3a", "kosong": "#777777", "hapusan": "#e08a00"}
+
+
+def warna(label):
+    """Warna teks label menurut tema aktif."""
+    return {"terisi": theme.tone_hex("ok")[1], "kosong": theme.c("muted"),
+            "hapusan": theme.tone_hex("warn")[1]}.get(label, theme.c("faint"))
 
 
 def _pixmap(img_bgr, dpr):
@@ -46,10 +53,9 @@ class Tile(QFrame):
 
     def __init__(self):
         super().__init__()
-        self.setFrameShape(QFrame.Box)
-        self.setLineWidth(2)
         v = QVBoxLayout(self)
-        v.setContentsMargins(4, 4, 4, 4)
+        v.setContentsMargins(10, 10, 10, 10)
+        v.setSpacing(6)
         self.img = QLabel()
         self.img.setAlignment(Qt.AlignCenter)
         self.cap = QLabel()
@@ -59,11 +65,14 @@ class Tile(QFrame):
         for w in (self.img, self.cap, self.lab):
             v.addWidget(w)
         row = QHBoxLayout()
+        row.setSpacing(6)
+        self.buttons = {}
         for key, label in (("1", "terisi"), ("2", "kosong"), ("3", "hapusan")):
             b = QPushButton(f"{key} {label.capitalize()}")
             b.setFocusPolicy(Qt.NoFocus)          # fokus tetap di tab supaya tombol keyboard jalan
-            b.setStyleSheet(f"QPushButton {{ color: {WARNA[label]}; font-weight: bold; }}")
+            b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, label=label: self.labelled.emit(label))
+            self.buttons[label] = b
             row.addWidget(b)
         v.addLayout(row)
 
@@ -80,8 +89,11 @@ class Tile(QFrame):
         self.cap.setText(f"<b>{BL.describe(c)}</b><br>{Path(c['file']).stem[-6:]} · aturan: {c['aturan']}"
                          f" (skor {c['skor']:.2f}){model}")
         self.lab.setText(f"<b>{label.upper()}</b>" if label else "belum dilabeli")
-        self.lab.setStyleSheet(f"color: {WARNA.get(label, '#bbbbbb')}; font-size: 11pt")
-        self.setStyleSheet("Tile { border: 3px solid #1e78ff; }" if selected else "Tile { border: 1px solid #555; }")
+        self.lab.setStyleSheet(f"color: {warna(label)}; font-size: 11pt")
+        for name, b in self.buttons.items():
+            b.setStyleSheet(f"QPushButton {{ color: {warna(name)}; font-weight: 600; padding: 6px 8px; }}")
+        border = f"2px solid {theme.c('accent')}" if selected else f"1px solid {theme.c('border')}"
+        self.setStyleSheet(f"Tile {{ background: {theme.c('surface')}; border: {border}; border-radius: 12px; }}")
 
 
 class LatihTab(QWidget):
@@ -95,30 +107,36 @@ class LatihTab(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
 
         v = QVBoxLayout(self)
-        self.stats = QLabel("")
-        self.stats.setWordWrap(True)
-        v.addWidget(self.stats)
-        top = QHBoxLayout()
+        v.setContentsMargins(0, 18, 0, 0)
+        v.setSpacing(12)
+        top = toolbar()
         self.scope = QComboBox()
         self.scope.addItems(["Event ini", "Semua event"])
-        self.btn_load = QPushButton("Ambil contoh sulit")
-        self.btn_load.clicked.connect(self.load_items)
-        self.btn_train = QPushButton("Latih ulang model")
-        self.btn_train.clicked.connect(self.train)
-        self.btn_report = QPushButton("Laporan model")
-        self.btn_report.clicked.connect(self.report)
-        for w in (QLabel("Contoh dari:"), self.scope, self.btn_load, self.btn_train, self.btn_report):
+        self.scope.setToolTip("Sumber contoh")
+        self.btn_load = theme.button("Ambil contoh sulit", "target", "primary",
+                                     "Tampilkan bulatan yang paling membingungkan untuk dilabeli", self.load_items)
+        self.btn_train = theme.button("Latih ulang", "play", tip="Latih model dari label Anda (~1 menit)",
+                                      slot=self.train)
+        self.btn_report = theme.button("Laporan", "chart", tip="Hasil ujian model aktif", slot=self.report)
+        for w in (self.scope, self.btn_load, divider(), self.btn_train, self.btn_report):
             top.addWidget(w)
         top.addStretch()
         v.addLayout(top)
-        help_ = QLabel("Klik kotak atau pakai panah. Tekan <b>1 = TERISI</b> (dihitung sebagai jawaban), "
-                       "<b>2 = KOSONG</b>, <b>3 = HAPUSAN/bekas</b> (tidak dihitung), 0 = lewati, "
-                       "Backspace = hapus label. Lingkaran biru = bulatan yang ditanyakan.")
+        self.stats = QLabel("")
+        self.stats.setWordWrap(True)
+        self.stats.setProperty("role", "muted")
+        v.addWidget(self.stats)
+        help_ = QLabel("Pilih kotak (klik / panah), lalu tekan  <b>1</b> Terisi  ·  <b>2</b> Kosong  ·  "
+                       "<b>3</b> Hapusan  ·  <b>0</b> Lewati  ·  <b>Backspace</b> Hapus label")
+        help_.setToolTip("Terisi dihitung sebagai jawaban; hapusan/bekas tidak dihitung.\n"
+                         "Lingkaran biru = bulatan yang ditanyakan.")
         help_.setWordWrap(True)
         v.addWidget(help_)
 
         grid_w = QWidget()
         self.grid = QGridLayout(grid_w)
+        self.grid.setSpacing(12)
+        self.grid.setContentsMargins(0, 0, 0, 0)
         self.tiles = []
         for k in range(KOLOM * BARIS):
             t = Tile()
@@ -129,14 +147,19 @@ class LatihTab(QWidget):
         sc = self.scroll = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setWidget(grid_w)
-        v.addWidget(sc, 1)
+        self.empty = EmptyState("target", "Belum ada contoh",
+                                "Klik \"Ambil contoh sulit\" untuk menampilkan bulatan yang perlu dilabeli.")
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty)
+        self.stack.addWidget(sc)
+        v.addWidget(self.stack, 1)
 
-        nav = QHBoxLayout()
-        self.btn_prev = QPushButton("< Halaman sebelumnya")
-        self.btn_prev.clicked.connect(lambda: self._goto(self.page - 1))
-        self.btn_next = QPushButton("Halaman berikutnya >")
-        self.btn_next.clicked.connect(lambda: self._goto(self.page + 1))
+        nav = toolbar()
+        nav.addStretch()
+        self.btn_prev = theme.button("", "chevron-left", "icon", "Halaman sebelumnya", lambda: self._goto(self.page - 1))
+        self.btn_next = theme.button("", "chevron-right", "icon", "Halaman berikutnya", lambda: self._goto(self.page + 1))
         self.page_lbl = QLabel("")
+        self.page_lbl.setProperty("role", "muted")
         for w in (self.btn_prev, self.page_lbl, self.btn_next):
             nav.addWidget(w)
         nav.addStretch()
@@ -146,6 +169,7 @@ class LatihTab(QWidget):
         self.log.setMaximumHeight(170)
         self.log.setVisible(False)
         v.addWidget(self.log)
+        theme.bus.changed.connect(self._show_page)
         self._show_page()
 
     # ---- data
@@ -177,7 +201,7 @@ class LatihTab(QWidget):
         if self.loader is not None and self.loader.isRunning():
             return
         self.btn_load.setEnabled(False)
-        self.btn_load.setText("Mencari contoh...")
+        self.btn_load.setText("Mencari contoh…")
         self.loader = Loader(self._rows(), self.db.labels(), self._jumlah_of())
         self.loader.done.connect(self._loaded)
         self.loader.start()
@@ -206,6 +230,9 @@ class LatihTab(QWidget):
             t.show_item(c, labels.get((c["file"], c["idx"])) if c else None, k == self.sel, dpr)
         pages = max(1, -(-len(self.items) // (KOLOM * BARIS)))
         self.page_lbl.setText(f"Halaman {self.page + 1} / {pages} · {len(self.items)} contoh")
+        self.stack.setCurrentWidget(self.scroll if self.items else self.empty)
+        for w in (self.btn_prev, self.page_lbl, self.btn_next):
+            w.setVisible(bool(self.items))
         self.btn_prev.setEnabled(self.page > 0)
         self.btn_next.setEnabled(self.page + 1 < pages)
         if its:
@@ -286,7 +313,7 @@ class LatihTab(QWidget):
         self.log.clear()
         self.log.setVisible(True)
         self.btn_train.setEnabled(False)
-        self.btn_train.setText("Melatih...")
+        self.btn_train.setText("Melatih…")
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.readyReadStandardOutput.connect(
@@ -296,7 +323,7 @@ class LatihTab(QWidget):
 
     def _trained(self, *_):
         self.btn_train.setEnabled(True)
-        self.btn_train.setText("Latih ulang model")
+        self.btn_train.setText("Latih ulang")
         BL.active_model()
         self.update_stats()
         self.log.appendPlainText("\nModel baru dipakai untuk foto yang diproses sesudah ini. "

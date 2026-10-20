@@ -3,17 +3,18 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QFont
-from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (QDialog, QFormLayout, QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                               QMessageBox, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QWidget)
 
+from app import theme
 from app.colors import paint
+from app.widgets import ToneDelegate
 
 LETTERS = "ABCDE"
 BLOCK = 30
-CHOSEN = QColor(52, 120, 220)
-CHANGED = QColor(255, 216, 168)
+ROW_H, NO_W, OPT_W = 28, 46, 36
 
 
 class KeyBlock(QTableWidget):
@@ -28,12 +29,19 @@ class KeyBlock(QTableWidget):
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         self.setSelectionMode(QTableWidget.SingleSelection)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setShowGrid(False)
+        self.setItemDelegate(ToneDelegate(self, pill=True))
+        self.setFrameShape(QFrame.NoFrame)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.setColumnWidth(0, 44)
+        self.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
+        self.horizontalHeader().setHighlightSections(False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setColumnWidth(0, NO_W)
         for c in range(1, 6):
-            self.setColumnWidth(c, 34)
+            self.setColumnWidth(c, OPT_W)
         for r in range(end - start):
-            self.setRowHeight(r, 24)
+            self.setRowHeight(r, ROW_H)
             num = QTableWidgetItem(str(start + r + 1))
             num.setTextAlignment(Qt.AlignCenter)
             f = num.font()
@@ -44,27 +52,19 @@ class KeyBlock(QTableWidget):
                 it = QTableWidgetItem(ch)
                 it.setTextAlignment(Qt.AlignCenter)
                 self.setItem(r, c, it)
-        w = 44 + 5 * 34 + 4
-        self.setFixedWidth(w)
-        self.setFixedHeight(min(24 * (end - start) + self.horizontalHeader().height() + 4, 24 * BLOCK + 30))
+        self.setFixedWidth(NO_W + 5 * OPT_W + 8)
+        self.setFixedHeight(ROW_H * (end - start) + 40)
         self.cellClicked.connect(self._click)
 
     def show_value(self, q, letter, changed):
         r = q - self.start
         for c, ch in enumerate(LETTERS, 1):
             it = self.item(r, c)
-            if ch == letter:
-                it.setBackground(CHOSEN)
-                it.setForeground(QColor("white"))
-                f = it.font()
-                f.setBold(True)
-                it.setFont(f)
-            else:
-                paint(it, None)
-                f = it.font()
-                f.setBold(False)
-                it.setFont(f)
-        paint(self.item(r, 0), CHANGED if changed else None)
+            paint(it, "chosen" if ch == letter else None)
+            f = it.font()
+            f.setBold(ch == letter)
+            it.setFont(f)
+        paint(self.item(r, 0), "warn" if changed else None)
 
     def _click(self, r, c):
         if c >= 1:
@@ -91,7 +91,13 @@ class KunciDialog(QDialog):
         self.blocks = []
 
         v = QVBoxLayout(self)
+        v.setContentsMargins(24, 22, 24, 20)
+        v.setSpacing(14)
+        title = QLabel(f"Kunci jawaban · {bidang}" if bidang else "Bidang baru")
+        title.setProperty("role", "title")
+        v.addWidget(title)
         form = QFormLayout()
+        form.setSpacing(10)
         self.f_kode = QLineEdit(kode)
         self.f_bidang = QLineEdit(bidang)
         self.f_jumlah = QSpinBox()
@@ -102,16 +108,18 @@ class KunciDialog(QDialog):
         form.addRow("Nama bidang", self.f_bidang)
         form.addRow("Jumlah soal", self.f_jumlah)
         self.f_text = QLineEdit(kunci)
-        self.f_text.setFont(QFont("Consolas", 10))
+        self.f_text.setFont(theme.mono())
         self.f_text.setToolTip("Kunci lengkap sebagai teks; bisa ditempel (paste). Hanya huruf A-E yang dipakai.")
         self.f_text.textEdited.connect(self._text_edited)
         form.addRow("Kunci (teks)", self.f_text)
         v.addLayout(form)
-        v.addWidget(QLabel("Klik huruf untuk mengganti kunci, atau pilih nomor lalu ketik A-E (kursor turun "
-                           "otomatis). Nomor yang diubah berwarna oranye sampai disimpan."))
+        hint = QLabel("Klik huruf, atau pilih nomor lalu ketik A–E. Nomor yang diubah ditandai oranye.")
+        hint.setProperty("role", "muted")
+        v.addWidget(hint)
 
         self.grid_host = QWidget()
         self.grid = QHBoxLayout(self.grid_host)
+        self.grid.setSpacing(14)
         self.grid.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -119,21 +127,20 @@ class KunciDialog(QDialog):
         v.addWidget(scroll, 1)
 
         self.info = QLabel("")
+        self.info.setProperty("role", "muted")
+        self.info.setWordWrap(True)
         v.addWidget(self.info)
         bar = QHBoxLayout()
-        self.btn_pdf = QPushButton("Buka PDF sumber")
+        bar.setSpacing(8)
+        self.btn_pdf = theme.button("Buka PDF sumber", "file-text",
+                                    tip=sumber or "Kunci ini tidak diimpor dari PDF",
+                                    slot=lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(sumber)))
         self.btn_pdf.setEnabled(bool(sumber) and Path(sumber).exists())
-        self.btn_pdf.setToolTip(sumber or "Sumber PDF tidak diketahui (kunci tidak diimpor dari PDF)")
-        self.btn_pdf.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(sumber)))
         bar.addWidget(self.btn_pdf)
         bar.addStretch()
-        cancel = QPushButton("Batal")
-        cancel.clicked.connect(self.reject)
-        ok = QPushButton("Simpan")
+        bar.addWidget(theme.button("Batal", variant="ghost", slot=self.reject))
+        ok = theme.button("Simpan", "save", "primary", slot=self._ok)
         ok.setDefault(True)
-        ok.setStyleSheet("font-weight: bold")
-        ok.clicked.connect(self._ok)
-        bar.addWidget(cancel)
         bar.addWidget(ok)
         v.addLayout(bar)
         self._build()
@@ -194,7 +201,7 @@ class KunciDialog(QDialog):
         if len(self.original) and n != len(self.original):
             parts.append(f"jumlah soal berubah dari {len(self.original)}")
         if empty:
-            parts.append(f"<span style='color:#c0392b'>belum diisi: soal {', '.join(empty)}</span>")
+            parts.append(f"<span style='color:{theme.tone_hex('error')[1]}'>belum diisi: soal {', '.join(empty)}</span>")
         self.info.setText("  |  ".join(parts))
 
     def _ok(self):

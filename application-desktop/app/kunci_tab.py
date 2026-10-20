@@ -3,17 +3,17 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-                               QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QHeaderView, QMessageBox, QStackedWidget, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ljk import kunci as KU
+from app import theme
 from app.colors import paint
 from app.kunci_dialog import KunciDialog
+from app.widgets import EmptyState, badge, divider, setup_table, toolbar
 from ljk import nilai as NI
 
 COL_KODE, COL_BIDANG, COL_JUMLAH, COL_KUNCI, COL_CATATAN = range(5)
-WARN = QColor(255, 216, 168)
 
 
 class KunciTab(QWidget):
@@ -26,29 +26,32 @@ class KunciTab(QWidget):
         self._dirty = False
 
         v = QVBoxLayout(self)
-        v.addWidget(QLabel(
-            "Daftarkan setiap <b>kode naskah</b> yang dipakai di event ini beserta <b>nama bidang</b> "
-            "(dipakai sebagai nama sheet di Excel, mis. <i>EKONOMI SMA</i>) dan <b>kuncinya</b> "
-            "(satu huruf A-E per soal). Jumlah soal dihitung otomatis dari panjang kunci."))
-        bar = QHBoxLayout()
-        for text, slot in (("Impor dari PDF pembahasan...", self._import_pdf),
-                           ("Impor dari Excel...", self._import_excel),
-                           ("Edit kunci per nomor...", self._edit_current),
-                           ("Tambah bidang", self._add_row), ("Hapus baris", self._del_rows)):
-            b = QPushButton(text)
-            b.clicked.connect(slot)
-            bar.addWidget(b)
+        v.setContentsMargins(0, 18, 0, 0)
+        v.setSpacing(14)
+        bar = toolbar()
+        for w in (theme.button("Impor PDF", "file-text", tip="Baca kunci dari folder PDF pembahasan soal",
+                               slot=self._import_pdf),
+                  theme.button("Impor Excel", "sheet", tip="Muat kunci dari file Excel", slot=self._import_excel),
+                  divider(),
+                  theme.button("Tambah bidang", "plus", tip="Tambah kode naskah baru", slot=self._add_row),
+                  theme.button("Edit kunci", "grid", tip="Edit kunci per nomor soal untuk baris yang dipilih",
+                               slot=self._edit_current),
+                  theme.button("Hapus", "trash", "danger", "Hapus baris yang dipilih", self._del_rows)):
+            bar.addWidget(w)
         bar.addStretch()
-        self.state = QLabel("")
+        self.state = badge("Belum disimpan", "warn")
+        self.state.setVisible(False)
         bar.addWidget(self.state)
-        self.save_btn = QPushButton("Simpan kunci")
-        self.save_btn.setStyleSheet("font-weight: bold")
-        self.save_btn.clicked.connect(self.save)
+        self.save_btn = theme.button("Simpan kunci", "save", "primary", slot=self.save)
         bar.addWidget(self.save_btn)
         v.addLayout(bar)
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Kode Naskah", "Nama Bidang", "Jumlah Soal", "Kunci", "Catatan"])
+        self.table.setHorizontalHeaderLabels(["Kode naskah", "Bidang", "Soal", "Kunci", "Catatan"])
+        setup_table(self.table)
+        self.table.setSelectionBehavior(QTableWidget.SelectItems)
+        self.table.setToolTip("Klik dua kali kolom Soal / Kunci untuk mengedit per nomor.\n"
+                              "Kode naskah dan bidang bisa diketik langsung.")
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(COL_KODE, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(COL_BIDANG, QHeaderView.Interactive)
@@ -59,9 +62,17 @@ class KunciTab(QWidget):
         self.table.setColumnWidth(COL_BIDANG, 220)
         self.table.itemChanged.connect(self._item_changed)
         self.table.cellDoubleClicked.connect(self._double_click)
-        v.addWidget(self.table)
-        v.addWidget(QLabel("Klik dua kali kolom Jumlah Soal / Kunci / Catatan untuk mengedit kunci per nomor soal. "
-                           "Kode Naskah dan Nama Bidang bisa diedit langsung di tabel."))
+        self.empty = EmptyState("key", "Belum ada kunci jawaban",
+                                "Impor dari PDF pembahasan atau Excel, atau tambah bidang secara manual.")
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty)
+        self.stack.addWidget(self.table)
+        v.addWidget(self.stack, 1)
+        self.table.model().rowsInserted.connect(self._update_empty)
+        self.table.model().rowsRemoved.connect(self._update_empty)
+
+    def _update_empty(self, *_):
+        self.stack.setCurrentWidget(self.table if self.table.rowCount() else self.empty)
 
     # ---- data
     def load(self, event_id):
@@ -84,7 +95,7 @@ class KunciTab(QWidget):
         jml.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(r, COL_JUMLAH, jml)
         ki = QTableWidgetItem(kunci)
-        ki.setFont(QFont("Consolas", 10))
+        ki.setFont(theme.mono())
         ki.setFlags(ki.flags() & ~Qt.ItemIsEditable)      # diedit lewat editor per nomor
         ki.setData(Qt.UserRole, sumber)
         self.table.setItem(r, COL_KUNCI, ki)
@@ -93,7 +104,7 @@ class KunciTab(QWidget):
         ci.setToolTip(note)
         self.table.setItem(r, COL_CATATAN, ci)
         if note and (warn is None or warn):
-            paint(ci, WARN)
+            paint(ci, "warn")
 
     def _item_changed(self, item):
         if item.column() == COL_KUNCI:
@@ -107,7 +118,7 @@ class KunciTab(QWidget):
 
     def _set_dirty(self, dirty):
         self._dirty = dirty
-        self.state.setText("<span style='color:#c0392b'>Belum disimpan</span>" if dirty else "")
+        self.state.setVisible(dirty)
 
     def confirm_leave(self):
         return not self._dirty

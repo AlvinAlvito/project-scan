@@ -1,20 +1,21 @@
-"""Tab 2: tambah foto LJK, proses di latar belakang, lihat status & nilai, ekspor Excel."""
+"""Tab Scan & Nilai: tambah foto LJK, proses di latar belakang, lihat status & nilai, ekspor Excel."""
 import shutil
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-                               QProgressBar, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QProgressBar,
+                               QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from app import theme
 from app.colors import paint
+from app.widgets import EmptyState, StatCard, divider, setup_table, toolbar
 from ljk import service as SV
 
 EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-STATUS_COLOR = {"OK": QColor(212, 237, 218), "Perlu cek": QColor(255, 229, 180),
-                "Sudah dicek": QColor(207, 226, 255), "Gagal": QColor(248, 196, 196)}
-HEAD = ["Urutan", "File", "Status", "Nama", "Nomor", "Kode", "Bidang", "B", "S", "K", "Nilai",
-        "Hal yang perlu dicek"]
+STATUS_TONE = {"OK": "ok", "Perlu cek": "warn", "Sudah dicek": "info", "Gagal": "error"}
+HEAD = ["#", "File", "Status", "Nama", "Nomor", "Kode", "Bidang", "Benar", "Salah", "Kosong", "Nilai", "Catatan"]
+CENTER = (0, 7, 8, 9, 10)
 
 
 class Worker(QThread):
@@ -50,52 +51,72 @@ class ScanTab(QWidget):
         self._pending = 0
 
         v = QVBoxLayout(self)
-        bar = QHBoxLayout()
-        self.btn_folder = QPushButton("Tambah foto dari folder...")
-        self.btn_folder.clicked.connect(self._add_folder)
-        self.btn_files = QPushButton("Tambah foto...")
-        self.btn_files.clicked.connect(self._add_files)
-        self.btn_redo = QPushButton("Proses ulang")
-        self.btn_redo.clicked.connect(self._reprocess)
-        self.btn_del = QPushButton("Hapus lembar")
-        self.btn_del.clicked.connect(self._delete)
-        self.only_check = QCheckBox("Hanya yang perlu cek")
+        v.setContentsMargins(0, 18, 0, 0)
+        v.setSpacing(14)
+
+        bar = toolbar()
+        self.btn_folder = theme.button("Tambah folder", "folder-plus", "primary",
+                                       "Proses semua foto di satu folder", self._add_folder)
+        self.btn_files = theme.button("Tambah foto", "image-plus", tip="Pilih beberapa foto", slot=self._add_files)
+        self.btn_redo = theme.button("Proses ulang", "refresh", tip="Baca ulang lembar yang dipilih",
+                                     slot=self._reprocess)
+        self.btn_del = theme.button("Hapus", "trash", "danger", "Hapus lembar yang dipilih (foto asli tetap ada)",
+                                    self._delete)
+        self.only_check = theme.button("Perlu cek saja", "filter", tip="Tampilkan hanya lembar yang perlu dicek")
+        self.only_check.setCheckable(True)
         self.only_check.toggled.connect(self.refresh)
-        self.btn_export = QPushButton("Ekspor Daftar Nilai...")
-        self.btn_export.setStyleSheet("font-weight: bold")
-        self.btn_export.clicked.connect(self._export)
-        for w in (self.btn_folder, self.btn_files, self.btn_redo, self.btn_del, self.only_check):
+        self.btn_export = theme.button("Ekspor nilai", "download", tip="Simpan daftar nilai ke Excel",
+                                       slot=self._export)
+        for w in (self.btn_folder, self.btn_files, divider(), self.btn_redo, self.btn_del):
             bar.addWidget(w)
         bar.addStretch()
+        bar.addWidget(self.only_check)
         bar.addWidget(self.btn_export)
         v.addLayout(bar)
 
-        prog = QHBoxLayout()
-        self.progress = QProgressBar()
-        self.progress.setVisible(False)
-        self.progress_label = QLabel("")
-        self.btn_stop = QPushButton("Hentikan")
-        self.btn_stop.setVisible(False)
-        self.btn_stop.clicked.connect(self._stop)
-        prog.addWidget(self.progress, 1)
-        prog.addWidget(self.progress_label)
-        prog.addWidget(self.btn_stop)
-        v.addLayout(prog)
+        stats = toolbar(12)
+        self.cards = {"total": StatCard("Lembar"), "OK": StatCard("OK", "ok"),
+                      "Perlu cek": StatCard("Perlu cek", "warn"), "Sudah dicek": StatCard("Sudah dicek", "info"),
+                      "Gagal": StatCard("Gagal", "error")}
+        for card in self.cards.values():
+            stats.addWidget(card, 1)
+        v.addLayout(stats)
 
-        self.summary = QLabel("")
-        v.addWidget(self.summary)
+        self.prog_box = QFrame()
+        self.prog_box.setProperty("role", "card")
+        pb = QHBoxLayout(self.prog_box)
+        pb.setContentsMargins(16, 10, 10, 10)
+        pb.setSpacing(14)
+        self.progress_label = QLabel("")
+        self.progress_label.setMinimumWidth(260)
+        self.progress = QProgressBar()
+        self.progress.setTextVisible(False)
+        self.btn_stop = theme.button("Hentikan", "stop", "ghost", slot=self._stop)
+        pb.addWidget(self.progress_label)
+        pb.addWidget(self.progress, 1)
+        pb.addWidget(self.btn_stop)
+        self.prog_box.setVisible(False)
+        v.addWidget(self.prog_box)
+
         self.table = QTableWidget(0, len(HEAD))
         self.table.setHorizontalHeaderLabels(HEAD)
+        setup_table(self.table, pill=True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.verticalHeader().setVisible(False)
+        self.table.setToolTip("Klik dua kali untuk membuka lembar di Cek Manual")
         h = self.table.horizontalHeader()
         for c in range(len(HEAD) - 1):
             h.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(len(HEAD) - 1, QHeaderView.Stretch)
+        for c in CENTER:
+            self.table.horizontalHeaderItem(c).setTextAlignment(Qt.AlignCenter)
         self.table.cellDoubleClicked.connect(self._double_click)
-        v.addWidget(self.table)
-        v.addWidget(QLabel("Klik dua kali sebuah baris untuk membuka lembar di tab Cek Manual."))
+
+        self.empty = EmptyState("image-plus", "Belum ada lembar",
+                                "Tambahkan folder berisi foto LJK untuk mulai membaca.")
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty)
+        self.stack.addWidget(self.table)
+        v.addWidget(self.stack, 1)
 
     def busy(self):
         return self.worker is not None and self.worker.isRunning()
@@ -111,18 +132,21 @@ class ScanTab(QWidget):
     def refresh(self):
         self.table.setRowCount(0)
         if self.event_id is None:
-            self.summary.setText("")
             return
         views = SV.event_views(self.db, self.event_id)
         counts = {}
         for v in views:
             counts[v.status] = counts.get(v.status, 0) + 1
-        self.summary.setText(
-            f"<b>{len(views)}</b> lembar &nbsp;|&nbsp; OK {counts.get('OK', 0)} &nbsp;|&nbsp; "
-            f"Perlu cek <b>{counts.get('Perlu cek', 0)}</b> &nbsp;|&nbsp; Sudah dicek {counts.get('Sudah dicek', 0)}"
-            f" &nbsp;|&nbsp; Gagal {counts.get('Gagal', 0)}")
+        self.cards["total"].set(len(views))
+        for k in ("OK", "Perlu cek", "Sudah dicek", "Gagal"):
+            self.cards[k].set(counts.get(k, 0))
         if self.only_check.isChecked():
             views = [v for v in views if v.status in ("Perlu cek", "Gagal")]
+        if not views:
+            self.empty.set_text(*(("Semua beres", "Tidak ada lembar yang perlu dicek.")
+                                  if self.only_check.isChecked() else
+                                  ("Belum ada lembar", "Tambahkan folder berisi foto LJK untuk mulai membaca.")))
+        self.stack.setCurrentWidget(self.table if views else self.empty)
         self.table.setRowCount(len(views))
         for r, v in enumerate(views):
             row = v.row
@@ -134,12 +158,19 @@ class ScanTab(QWidget):
                     "; ".join(i["text"] for i in v.issues)]
             for c, val in enumerate(vals):
                 it = QTableWidgetItem(str(val))
-                if c in (0, 7, 8, 9, 10):
+                if c in CENTER:
                     it.setTextAlignment(Qt.AlignCenter)
                 if c == 0:
                     it.setData(Qt.UserRole, row["id"])
                 if c == 2:
-                    paint(it, STATUS_COLOR.get(v.status))
+                    it.setTextAlignment(Qt.AlignCenter)
+                    paint(it, STATUS_TONE.get(v.status))
+                if c == 10 and val != "":
+                    f = it.font()
+                    f.setBold(True)
+                    it.setFont(f)
+                if c == len(vals) - 1:
+                    it.setToolTip(str(val))
                 self.table.setItem(r, c, it)
 
     def _selected_ids(self):
@@ -193,7 +224,7 @@ class ScanTab(QWidget):
     def _progress(self, done, total, name):
         self.progress.setMaximum(total)
         self.progress.setValue(done)
-        self.progress_label.setText(f"{done}/{total}  {name}")
+        self.progress_label.setText(f"<b>Membaca {done}/{total}</b>&nbsp;&nbsp;{name}")
 
     def _finished(self):
         self._set_running(False)
@@ -207,8 +238,7 @@ class ScanTab(QWidget):
     def _set_running(self, running):
         for w in (self.btn_folder, self.btn_files, self.btn_redo, self.btn_del, self.btn_export):
             w.setEnabled(not running)
-        self.progress.setVisible(running)
-        self.btn_stop.setVisible(running)
+        self.prog_box.setVisible(running)
         if not running:
             self.progress_label.setText("")
 
@@ -227,6 +257,7 @@ class ScanTab(QWidget):
     def _delete(self):
         ids = self._selected_ids()
         if not ids:
+            QMessageBox.information(self, "Hapus lembar", "Pilih dulu lembar yang akan dihapus.")
             return
         if QMessageBox.question(self, "Hapus lembar", f"Hapus {len(ids)} lembar dari event ini?\n"
                                 "Foto asli tidak ikut terhapus.") != QMessageBox.Yes:
