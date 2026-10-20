@@ -1,0 +1,11 @@
+# Lingkungan TERPISAH untuk melatih model bulatan (tab "4. Latih Model"), bukan untuk aplikasi.
+# Aplikasi sendiri hanya memuat file .onnx hasil latih lewat OpenCV.
+#
+#   python -m venv .venv-latih
+#   .venv-latih\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   .venv-latih\Scripts\python -m pip install -r requirements-latih.txt
+numpy>=2.0
+opencv-python-headless>=4.10
+openpyxl>=3.1
+onnx
+onnxscript

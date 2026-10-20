@@ -1,0 +1,23 @@
+# Lingkungan Python & hasil build
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+build/
+dist/
+build_log.txt
+
+# DATA PRIBADI PESERTA & KUNCI JAWABAN - jangan pernah di-commit (repository publik)
+# (database, backup, hasil baca/rekap, foto LJK, model hasil latih dari foto peserta)
+backup/
+data/
+output/
+*.db
+*.db-journal
+*.xlsx
+*.jpg
+*.jpeg
+*.npz
+*.onnx
+latih.json
+aktif*.json

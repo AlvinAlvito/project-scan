@@ -1,0 +1,6 @@
+numpy>=2.0
+opencv-python-headless>=4.10
+openpyxl>=3.1
+pypdfium2
+PySide6
+pyinstaller
