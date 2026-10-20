@@ -3,8 +3,8 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QApplication, QFileDialog, QHeaderView, QMessageBox, QStackedWidget, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+                               QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ljk import kunci as KU
 from app import theme
@@ -46,6 +46,21 @@ class KunciTab(QWidget):
         bar.addWidget(self.save_btn)
         v.addLayout(bar)
 
+        # bidang yang terdaftar di server tetapi belum punya kunci di laptop ini
+        self.srv_box = QFrame()
+        self.srv_box.setProperty("role", "card")
+        sb = QHBoxLayout(self.srv_box)
+        sb.setContentsMargins(16, 10, 12, 10)
+        sb.setSpacing(10)
+        self.srv_text = QLabel("")
+        self.srv_text.setWordWrap(True)
+        sb.addWidget(self.srv_text, 1)
+        self.srv_buttons = QHBoxLayout()
+        self.srv_buttons.setSpacing(8)
+        sb.addLayout(self.srv_buttons)
+        self.srv_box.setVisible(False)
+        v.addWidget(self.srv_box)
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Kode naskah", "Bidang", "Soal", "Kunci", "Catatan"])
         setup_table(self.table)
@@ -84,6 +99,39 @@ class KunciTab(QWidget):
                 self._append(s.kode, s.bidang, s.kunci, sumber=s.sumber)
         self.table.blockSignals(False)
         self._set_dirty(False)
+        self._show_server_bidang()
+
+    def _show_server_bidang(self):
+        """Tampilkan bidang server yang kode naskahnya belum ada di tabel kunci."""
+        while self.srv_buttons.count():
+            w = self.srv_buttons.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        if self.event_id is None:
+            self.srv_box.setVisible(False)
+            return
+        have = {r[0] for r in self._rows()}
+        missing = [b for b in self.db.server_bidang(self.event_id) if b["kode_naskah"] not in have]
+        self.srv_box.setVisible(bool(missing))
+        if not missing:
+            return
+        daftar = ", ".join(f"<b>{b['nama']}</b> ({b['kode_naskah']} · {b['jumlah_soal']} soal)" for b in missing)
+        self.srv_text.setText(f"Bidang dari server yang belum ada kuncinya: {daftar}")
+        for b in missing[:5]:
+            btn = theme.button(f"Isi kunci {b['kode_naskah']}", "key", "primary" if b is missing[0] else None,
+                               f"Isi kunci {b['nama']}", lambda _=False, b=b: self.add_from_server(b))
+            self.srv_buttons.addWidget(btn)
+        theme.refresh_all()
+
+    def add_from_server(self, b):
+        """Tambah baris bidang dari server (kode, nama, jumlah soal sudah terisi) lalu buka editor kunci."""
+        self.table.blockSignals(True)
+        self._append(b["kode_naskah"], b["nama"], "")
+        self.table.blockSignals(False)
+        r = self.table.rowCount() - 1
+        self.table.setCurrentCell(r, COL_KODE)
+        self._edit_row(r, new=True, jumlah=int(b.get("jumlah_soal") or 0))
+        self._show_server_bidang()
 
     def _append(self, kode, bidang, kunci, note="", sumber="", warn=None):
         r = self.table.rowCount()
@@ -171,9 +219,9 @@ class KunciTab(QWidget):
             return
         self._edit_row(r)
 
-    def _edit_row(self, r, new=False):
+    def _edit_row(self, r, new=False, jumlah=0):
         kode, bidang, kunci, sumber = self._rows()[r]
-        d = KunciDialog(self, kode, bidang, kunci, sumber)
+        d = KunciDialog(self, kode, bidang, kunci, sumber, jumlah=jumlah)
         if not d.exec():
             if new:
                 self.table.removeRow(r)

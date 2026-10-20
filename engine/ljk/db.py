@@ -60,7 +60,8 @@ class DB:
             with self.con:
                 self.con.execute("ALTER TABLE naskah ADD COLUMN sumber TEXT DEFAULT ''")
         # Kolom sinkron server (LJK Reader Online), ditambahkan ke database lama bila belum ada
-        self._add_columns("event", {"server_kompetisi_id": "INTEGER", "server_url": "TEXT DEFAULT ''"})
+        self._add_columns("event", {"server_kompetisi_id": "INTEGER", "server_url": "TEXT DEFAULT ''",
+                                    "server_bidang": "TEXT DEFAULT '[]'"})
         self._add_columns("lembar", {"server_id": "INTEGER", "server": "TEXT DEFAULT '{}'",
                                      "server_dicek": "INTEGER DEFAULT 0"})
 
@@ -91,6 +92,29 @@ class DB:
         with self.con:
             self.con.execute("UPDATE event SET server_kompetisi_id=?, server_url=? WHERE id=?",
                              (kompetisi_id, url, event_id))
+
+    def upsert_server_event(self, url, kompetisi_id, nama, tanggal, bidang):
+        """Event lokal untuk satu kompetisi server: dibuat bila belum ada, nama/tanggal/bidang diperbarui
+        bila sudah ada. Mengembalikan (event_id, dibuat_baru)."""
+        row = self.con.execute("SELECT id FROM event WHERE server_kompetisi_id=? AND server_url=?",
+                               (kompetisi_id, url)).fetchone()
+        bj = json.dumps(bidang)
+        with self.con:
+            if row:
+                self.con.execute("UPDATE event SET nama=?, tanggal=?, server_bidang=? WHERE id=?",
+                                 (nama, tanggal, bj, row["id"]))
+                return row["id"], False
+            cur = self.con.execute("INSERT INTO event(nama, tanggal, server_kompetisi_id, server_url, server_bidang) "
+                                   "VALUES (?, ?, ?, ?, ?)", (nama, tanggal, kompetisi_id, url, bj))
+            return cur.lastrowid, True
+
+    def server_bidang(self, event_id):
+        """Bidang kompetisi server yang terhubung: [{kode_naskah, nama, jumlah_soal}]."""
+        r = self.con.execute("SELECT server_bidang FROM event WHERE id=?", (event_id,)).fetchone()
+        try:
+            return json.loads(r["server_bidang"] or "[]") if r else []
+        except ValueError:
+            return []
 
     def delete_event(self, event_id):
         with self.con:

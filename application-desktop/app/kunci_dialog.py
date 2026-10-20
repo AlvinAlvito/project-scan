@@ -82,11 +82,11 @@ class KeyBlock(QTableWidget):
 
 
 class KunciDialog(QDialog):
-    def __init__(self, parent, kode, bidang, kunci, sumber=""):
+    def __init__(self, parent, kode, bidang, kunci, sumber="", jumlah=0):
         super().__init__(parent)
         self.setWindowTitle(f"Kunci Jawaban - {bidang or 'bidang baru'}")
         self.original = kunci
-        self.kunci = list(kunci)
+        self.kunci = list(kunci) or [""] * jumlah      # bidang baru dari server: nomor kosong sejumlah soal
         self.sumber = sumber
         self.blocks = []
 
@@ -102,7 +102,7 @@ class KunciDialog(QDialog):
         self.f_bidang = QLineEdit(bidang)
         self.f_jumlah = QSpinBox()
         self.f_jumlah.setRange(1, 180)
-        self.f_jumlah.setValue(max(len(kunci), 1))
+        self.f_jumlah.setValue(max(len(self.kunci), 1))
         self.f_jumlah.valueChanged.connect(self._resize)
         form.addRow("Kode naskah", self.f_kode)
         form.addRow("Nama bidang", self.f_bidang)

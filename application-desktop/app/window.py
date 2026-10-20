@@ -1,7 +1,7 @@
 """Jendela utama: daftar event di sidebar kiri, tab Kunci / Scan & Nilai / Cek Manual / Latih di kanan."""
 import shutil
 
-from PySide6.QtCore import QRectF, QSize, Qt, QUrl
+from PySide6.QtCore import QRectF, QSize, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QStackedWidget, QStyle, QStyledItemDelegate, QTabWidget,
@@ -12,11 +12,23 @@ from app.kunci_tab import KunciTab
 from app.latih_tab import LatihTab
 from app.review_tab import ReviewTab
 from app.scan_tab import ScanTab
-from app.server_dialog import ServerDialog
+from app.server_dialog import ServerDialog, fmt_date
 from app.widgets import EmptyState
 
 TABS = (("key", "Kunci Jawaban"), ("scan", "Scan && Nilai"), ("clipboard-check", "Cek Manual"),
         ("cpu", "Latih Model"))
+
+
+class KompetisiLoader(QThread):
+    """Ambil daftar kompetisi server di latar belakang supaya jendela tidak macet."""
+    done = Signal(object)
+    failed = Signal(str)
+
+    def run(self):
+        try:
+            self.done.emit(SC.kompetisi())
+        except SC.ServerError as e:
+            self.failed.emit(str(e))
 
 
 class EventDialog(QDialog):
@@ -133,9 +145,11 @@ class MainWindow(QMainWindow):
         lb.setProperty("role", "section")
         sec.addWidget(lb)
         sec.addStretch()
+        self.btn_refresh = theme.button("", "refresh", "icon", "Ambil kompetisi terbaru dari server",
+                                        lambda: self._sync_server_events(manual=True))
         self.btn_edit = theme.button("", "pencil", "icon", "Ubah event", self._edit_event)
         self.btn_delete = theme.button("", "trash", "icon", "Hapus event", self._delete_event)
-        for b in (self.btn_edit, self.btn_delete):
+        for b in (self.btn_refresh, self.btn_edit, self.btn_delete):
             b.setFixedSize(32, 32)
             b.setIconSize(QSize(16, 16))
             sec.addWidget(b)
@@ -215,7 +229,9 @@ class MainWindow(QMainWindow):
 
         theme.bus.changed.connect(self._theme_changed)
         self._theme_changed()
+        self._loader = None
         self._load_events()
+        self._sync_server_events()
 
     def _theme_changed(self):
         dark = theme.name() == "gelap"
@@ -236,7 +252,8 @@ class MainWindow(QMainWindow):
         self.events.blockSignals(True)
         self.events.clear()
         for ev in self.db.events():
-            it = QListWidgetItem(f"{ev['nama']}\n{ev['tanggal']}")
+            srv = " · server" if ev["server_kompetisi_id"] and ev["server_url"] else ""
+            it = QListWidgetItem(f"{ev['nama']}\n{ev['tanggal']}{srv}")
             it.setData(Qt.UserRole, ev["id"])
             it.setToolTip(ev["nama"])
             self.events.addItem(it)
@@ -283,6 +300,42 @@ class MainWindow(QMainWindow):
     def _server(self):
         ServerDialog(self).exec()
         self._update_server_button()
+        self._sync_server_events()
+
+    # ---- kompetisi server -> event desktop
+    def _sync_server_events(self, manual=False):
+        """Setiap kompetisi di server otomatis menjadi event di desktop (nama, tanggal, bidang ikut
+        diperbarui). Event lokal biasa dan data yang sudah ada tidak diubah."""
+        if not SC.logged_in():
+            if manual:
+                QMessageBox.information(self, "Server", "Hubungkan server dulu (tombol di kiri bawah).")
+            return
+        if self._loader is not None and self._loader.isRunning():
+            return
+        self.btn_refresh.setEnabled(False)
+        self._loader = KompetisiLoader(self)
+        self._loader.done.connect(lambda items: self._apply_server_events(items, manual))
+        self._loader.failed.connect(lambda msg: self._server_sync_failed(msg, manual))
+        self._loader.finished.connect(lambda: self.btn_refresh.setEnabled(True))
+        self._loader.start()
+
+    def _apply_server_events(self, items, manual):
+        url = SC.config()["url"]
+        baru = 0
+        for k in items:
+            bidang = [{"kode_naskah": b["kode_naskah"], "nama": b["nama"], "jumlah_soal": b["jumlah_soal"]}
+                      for b in k.get("bidang", [])]
+            _eid, created = self.db.upsert_server_event(url, k["id"], k["nama"], fmt_date(k["tanggal"]), bidang)
+            baru += created
+        self._load_events(select=self.event_id)
+        if manual:
+            QMessageBox.information(self, "Server", f"{len(items)} kompetisi di server" +
+                                    (f", {baru} event baru ditambahkan." if baru else ", semua sudah ada di desktop."))
+
+    def _server_sync_failed(self, msg, manual):
+        self._update_server_button()
+        if manual:
+            QMessageBox.warning(self, "Server", msg)
 
     def _new_event(self):
         d = EventDialog(self)
