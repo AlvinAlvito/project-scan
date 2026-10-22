@@ -130,6 +130,16 @@ def process_photo(path, out_dir, kontras="standar"):
     return rec
 
 
+def cek_scale(width):
+    """Skala gambar cek (lembar.jpg) dari lebarnya: 1,5 sekarang, 0,75 versi lama."""
+    return width / (T.CANON_W + 2 * T.PAD)
+
+
+def cek_xy(xy, s):
+    """Posisi bulatan (px bingkai baku, seperti baca.npz 'xy') di gambar cek berskala s."""
+    return (np.asarray(xy, float) + T.PAD) * s + np.array([0.0, OVERLAY_BAR * s])
+
+
 def bw_source(gambar):
     """Bahan tampilan hitam-putih (tampilan.bw_prepare) untuk gambar cek satu lembar, atau None.
     Posisi bulatan & faktor kontras dari baca.npz di folder lembar; lembar lama yang dibaca tanpa
@@ -142,8 +152,8 @@ def bw_source(gambar):
     npz = gambar.parent / "baca.npz"
     if npz.is_file():
         z = np.load(npz)
-        s = img.shape[1] / (T.CANON_W + 2 * T.PAD)          # skala gambar cek (1,5 sekarang; 0,75 versi lama)
-        centers = (z["xy"] + T.PAD) * s + np.array([0.0, OVERLAY_BAR * s])
+        s = cek_scale(img.shape[1])
+        centers = cek_xy(z["xy"], s)
         radius = (T.BUBBLE_R - 1.5) * s                     # bagian dalam bulatan, garis cetaknya tidak ikut
         ukur = T.FILL_R * s                                 # area ukur kegelapan mesin baca
         faktor = float(z["kontras"]) if "kontras" in z.files else OM.contrast_factor(z["skor"].astype(float))

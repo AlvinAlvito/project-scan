@@ -128,6 +128,10 @@ hasil sendirian. Tanpa model yang lulus ujian, pembacaan sama persis seperti tan
 1. **Ambil contoh sulit** -> muncul bulatan yang paling membingungkan (tipis, mengilap,
    setengah terisi, bekas hapusan). Tekan **1 = terisi**, **2 = kosong**, **3 = hapusan/bekas**,
    0 = lewati, Backspace = hapus label. Label disimpan di tabel `label_bulatan` (ljk.db).
+   600 contoh paling berguna dikelompokkan **per LJK**: satu halaman = satu LJK (yang contohnya
+   terbanyak dulu), urut posisi di lembar. **Klik dua kali** kotak (atau Enter) membuka LJK utuh
+   (gambar cek) dengan bulatan yang ditanya dilingkari biru; label 1/2/3 bisa diberi di sana dan
+   lingkaran pindah ke contoh berikutnya di LJK yang sama.
 2. Lembar yang **Sudah dicek** di Cek Manual ikut menjadi bahan latih (jawaban akhir soal
    1..jumlah soal, digit nomor & kode).
 3. **Latih ulang model** menjalankan `tools/latih_bulatan.py` di lingkungan PyTorch terpisah

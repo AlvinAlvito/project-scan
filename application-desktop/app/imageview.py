@@ -58,6 +58,10 @@ class ImageView(QGraphicsView):
     def zoom(self, factor):
         self.scale(factor, factor)
 
+    def current_zoom(self):
+        """Zoom sekarang dalam satuan focus(), supaya pindah titik tidak mengubah zoom pilihan pengguna."""
+        return self.transform().m11() * self._unit
+
     def wheelEvent(self, event):
         self.zoom(1.25 if event.angleDelta().y() > 0 else 0.8)
 

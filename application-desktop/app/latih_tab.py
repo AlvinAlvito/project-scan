@@ -4,20 +4,25 @@ membingungkan (1 = terisi, 2 = kosong, 3 = hapusan), lalu melatih ulang model.
 Model hasil latih hanya menjadi "juri kedua" dan baru aktif bila lulus ujian pada label
 panitia yang disisihkan (lihat ljk/belajar.py dan tools/latih_bulatan.py)."""
 import json
+from html import escape
 from pathlib import Path
 
 import cv2
-from PySide6.QtCore import QProcess, Qt, QThread, Signal
-from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
-                               QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import QProcess, QSize, Qt, QThread, Signal
+from PySide6.QtGui import QImage, QImageReader, QPixmap
+from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+                               QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from app import theme
+from app.imageview import ImageView
 from app.widgets import EmptyState, ToolbarFit, divider, toolbar
 from ljk import belajar as BL
+from ljk import service as SV
 
 ROOT = Path(__file__).resolve().parents[1]
-KOLOM, BARIS = 5, 3
+MAKS_CONTOH = 600       # contoh paling berguna (menurut prioritas) yang diambil, lalu dikelompokkan per LJK
+KOLOM = 5               # kolom kotak paling banyak (jendela sempit: lebih sedikit)
+TILE_W = 340            # perkiraan lebar satu kotak sebelum ada isinya
 TOMBOL = {Qt.Key_1: "terisi", Qt.Key_2: "kosong", Qt.Key_3: "hapusan"}
 
 
@@ -44,11 +49,106 @@ class Loader(QThread):
         self.rows, self.labels, self.jumlah_of = rows, labels, jumlah_of
 
     def run(self):
-        self.done.emit(BL.candidates(self.rows, self.labels, self.jumlah_of, BL.active_model(), limit=600))
+        # tanpa batas: ribuan contoh (puluhan per LJK, kebanyakan bulatan nama yang samar) - terlalu banyak dilabeli
+        self.done.emit(BL.candidates(self.rows, self.labels, self.jumlah_of, BL.active_model(), limit=MAKS_CONTOH))
+
+
+class LembarDialog(QDialog):
+    """LJK utuh (gambar cek, seperti Cek Manual) dengan bulatan yang ditanya dilingkari biru, supaya label
+    diberikan dengan melihat seluruh lembar. Label 1/2/3 langsung di sini; lingkaran lalu pindah ke contoh
+    berikutnya di LJK yang sama (setelah contoh terakhir, jendela tertutup)."""
+
+    def __init__(self, tab, sheet, k):
+        super().__init__(tab)
+        self.db, self.items, self.k = tab.db, sheet["items"], k
+        row = sheet["row"]
+        nama = row["nama"] if row is not None and row["nama"] else ""
+        self.setWindowTitle(f"LJK utuh · {Path(sheet['file']).name}" + (f" · {nama}" if nama else ""))
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 14, 16, 14)
+        v.setSpacing(10)
+        self.head = QLabel()
+        self.head.setWordWrap(True)
+        v.addWidget(self.head)
+        self.view = ImageView()
+        self.view.setFocusPolicy(Qt.NoFocus)             # tombol keyboard tetap ke jendela ini
+        v.addWidget(self.view, 1)
+        bar = toolbar()
+        for ic, tip, d in (("chevron-left", "Contoh sebelumnya (←)", -1), ("chevron-right", "Contoh berikutnya (→)", 1)):
+            b = theme.button("", ic, "icon", tip, lambda _=False, d=d: self._go(d))
+            b.setFocusPolicy(Qt.NoFocus)
+            bar.addWidget(b)
+        bar.addWidget(divider())
+        for key, label in (("1", "terisi"), ("2", "kosong"), ("3", "hapusan")):
+            b = QPushButton(f"{key} {label.capitalize()}")
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(f"QPushButton {{ color: {warna(label)}; font-weight: 600; padding: 6px 10px; }}")
+            b.clicked.connect(lambda _=False, label=label: self._label(label))
+            bar.addWidget(b)
+        bar.addStretch()
+        hint = QLabel("1/2/3 label · 0 lewati · ← → pindah · Backspace hapus label · Esc tutup")
+        hint.setProperty("role", "muted")
+        bar.addWidget(hint)
+        v.addLayout(bar)
+        gambar = (row["gambar"] if row is not None else "") or ""
+        size = QImageReader(gambar).size() if gambar else QSize()
+        self.s = SV.cek_scale(size.width()) if size.isValid() else None
+        self.view.set_image(gambar if self.s else None)
+        top = tab.window()
+        self.resize(int(top.width() * 0.85), int(top.height() * 0.9))
+        self._zoom = 1.8
+        self._shown = False
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if not self._shown:                 # fokus ke bulatan setelah ukuran jendela final
+            self._shown = True
+            self._show()
+
+    def _show(self):
+        c = self.items[self.k]
+        label = self.db.labels().get((c["file"], c["idx"]))
+        self.head.setText(
+            f"<b>{escape(BL.describe(c))}</b> · contoh {self.k + 1} dari {len(self.items)} di LJK ini · aturan: "
+            f"{c['aturan']} (skor {c['skor']:.2f}) · label: "
+            f"<b style='color:{warna(label)}'>{label.upper() if label else 'belum dilabeli'}</b>")
+        if self.s:
+            x, y = SV.cek_xy(c["xy"], self.s)
+            self.view.focus(float(x), float(y), zoom=self._zoom)
+
+    def _go(self, d):
+        self._zoom = self.view.current_zoom()          # zoom pilihan pengguna dipertahankan
+        self.k = max(0, min(self.k + d, len(self.items) - 1))
+        self._show()
+
+    def _label(self, label):
+        c = self.items[self.k]
+        self.db.set_label(c["file"], c["idx"], label)
+        if self.k + 1 < len(self.items):
+            self._go(1)
+        else:
+            self.accept()                   # contoh terakhir di LJK ini
+
+    def keyPressEvent(self, e):
+        key = e.key()
+        if key in TOMBOL:
+            self._label(TOMBOL[key])
+        elif key == Qt.Key_Backspace:
+            c = self.items[self.k]
+            self.db.set_label(c["file"], c["idx"], None)
+            self._show()
+        elif key in (Qt.Key_0, Qt.Key_Space, Qt.Key_Right):
+            self._go(1)
+        elif key == Qt.Key_Left:
+            self._go(-1)
+        else:
+            super().keyPressEvent(e)        # Esc menutup
 
 
 class Tile(QFrame):
     clicked = Signal()
+    opened = Signal()               # klik dua kali: lihat LJK utuh
     labelled = Signal(str)          # label dipilih lewat tombol di kotak
 
     def __init__(self):
@@ -79,12 +179,16 @@ class Tile(QFrame):
     def mousePressEvent(self, e):
         self.clicked.emit()
 
-    def show_item(self, c, label, selected, dpr):
+    def mouseDoubleClickEvent(self, e):
+        self.opened.emit()
+
+    def show_item(self, c, label, selected, dpr, img=None):
+        """img: gambar baca lembar c (dibaca sekali per LJK oleh tab)."""
         self.setVisible(c is not None)
         if c is None:
             return
         # ~200 px layar (logis) apa pun DPI-nya: diperbesar dari gambar baca, tajam di layar DPI tinggi
-        self.img.setPixmap(_pixmap(BL.context_image(c["dir"], c["xy"], scale=2.5 * dpr), dpr))
+        self.img.setPixmap(_pixmap(BL.context_image(c["dir"], c["xy"], scale=2.5 * dpr, img=img), dpr))
         model = "" if c["model"] is None else f" · model {c['model']:.2f}"
         self.cap.setText(f"<b>{BL.describe(c)}</b><br>{Path(c['file']).stem[-6:]} · aturan: {c['aturan']}"
                          f" (skor {c['skor']:.2f}){model}")
@@ -101,7 +205,10 @@ class LatihTab(QWidget):
         super().__init__()
         self.db, self.data_dir = db, Path(data_dir)
         self.event_id = None
-        self.items, self.page, self.sel = [], 0, 0
+        # contoh dikelompokkan per LJK: satu halaman = satu LJK; page = indeks LJK, sel = kotak di LJK itu
+        self.sheets, self.page, self.sel = [], 0, 0
+        self._row_of = {}
+        self._baca_dir, self._baca_img = None, None
         self.loader = None
         self.proc = None
         self.setFocusPolicy(Qt.StrongFocus)
@@ -128,23 +235,23 @@ class LatihTab(QWidget):
         self.stats.setProperty("role", "muted")
         v.addWidget(self.stats)
         help_ = QLabel("Pilih kotak (klik / panah), lalu tekan  <b>1</b> Terisi  ·  <b>2</b> Kosong  ·  "
-                       "<b>3</b> Hapusan  ·  <b>0</b> Lewati  ·  <b>Backspace</b> Hapus label")
+                       "<b>3</b> Hapusan  ·  <b>0</b> Lewati  ·  <b>Backspace</b> Hapus label  ·  "
+                       "<b>klik dua kali / Enter</b> LJK utuh")
         help_.setToolTip("Terisi dihitung sebagai jawaban; hapusan/bekas tidak dihitung.\n"
                          "Lingkaran biru = bulatan yang ditanyakan.")
         help_.setWordWrap(True)
         v.addWidget(help_)
+        self.sheet_lbl = QLabel("")             # LJK yang sedang ditampilkan
+        self.sheet_lbl.setWordWrap(True)
+        self.sheet_lbl.setVisible(False)
+        v.addWidget(self.sheet_lbl)
 
         grid_w = QWidget()
         self.grid = QGridLayout(grid_w)
         self.grid.setSpacing(12)
         self.grid.setContentsMargins(0, 0, 0, 0)
-        self.tiles = []
-        for k in range(KOLOM * BARIS):
-            t = Tile()
-            t.clicked.connect(lambda k=k: self._select(k))
-            t.labelled.connect(lambda label, k=k: self._label_tile(k, label))
-            self.grid.addWidget(t, k // KOLOM, k % KOLOM)
-            self.tiles.append(t)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.tiles, self.cols = [], KOLOM     # kotak dibuat sesuai kebutuhan (jumlah contoh per LJK berbeda)
         sc = self.scroll = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setWidget(grid_w)
@@ -157,8 +264,8 @@ class LatihTab(QWidget):
 
         nav = toolbar()
         nav.addStretch()
-        self.btn_prev = theme.button("", "chevron-left", "icon", "Halaman sebelumnya", lambda: self._goto(self.page - 1))
-        self.btn_next = theme.button("", "chevron-right", "icon", "Halaman berikutnya", lambda: self._goto(self.page + 1))
+        self.btn_prev = theme.button("", "chevron-left", "icon", "LJK sebelumnya", lambda: self._goto(self.page - 1))
+        self.btn_next = theme.button("", "chevron-right", "icon", "LJK berikutnya", lambda: self._goto(self.page + 1))
         self.page_lbl = QLabel("")
         self.page_lbl.setProperty("role", "muted")
         for w in (self.btn_prev, self.page_lbl, self.btn_next):
@@ -203,46 +310,105 @@ class LatihTab(QWidget):
             return
         self.btn_load.setEnabled(False)
         self.btn_load.setText("Mencari contoh…")
-        self.loader = Loader(self._rows(), self.db.labels(), self._jumlah_of())
+        rows = self._rows()
+        self._row_of = {r["file"]: r for r in rows}
+        self.loader = Loader(rows, self.db.labels(), self._jumlah_of())
         self.loader.done.connect(self._loaded)
         self.loader.start()
 
     def _loaded(self, items):
         self.btn_load.setEnabled(True)
         self.btn_load.setText("Ambil contoh sulit")
-        self.items, self.page, self.sel = items, 0, 0
+        by = {}
+        for c in items:
+            by.setdefault(c["file"], []).append(c)
+        # satu LJK = satu halaman; di dalamnya urut posisi di lembar (nama, nomor, kode, soal 1, 2, ...)
+        self.sheets = [{"file": f, "row": self._row_of.get(f), "items": sorted(cs, key=lambda c: c["idx"])}
+                       for f, cs in by.items()]
+        # LJK dengan contoh sulit terbanyak dulu; bila sama, yang contohnya paling sulit
+        self.sheets.sort(key=lambda s: (-len(s["items"]), -max(c["prioritas"] for c in s["items"])))
+        self.page, self.sel = 0, 0
         if not items:
             QMessageBox.information(self, "Latih Model", "Tidak ada contoh. Pastikan foto sudah diproses "
                                     "(atau Proses ulang lembar lama agar gambar bacanya tersimpan).")
         self._show_page()
         self.setFocus()
 
-    # ---- tampilan halaman
+    # ---- tampilan halaman (satu LJK)
     def _page_items(self):
-        n = KOLOM * BARIS
-        return self.items[self.page * n:(self.page + 1) * n]
+        return self.sheets[self.page]["items"] if self.sheets else []
+
+    def _baca(self, d):
+        """Gambar baca LJK yang sedang ditampilkan, dibaca sekali untuk semua kotaknya."""
+        if self._baca_dir != d:
+            self._baca_dir, self._baca_img = d, BL.read_image(d)
+        return self._baca_img
+
+    def _ensure_tiles(self, n):
+        while len(self.tiles) < n:
+            k = len(self.tiles)
+            t = Tile()
+            t.clicked.connect(lambda k=k: self._select(k))
+            t.opened.connect(lambda k=k: self._open_sheet(k))
+            t.labelled.connect(lambda label, k=k: self._label_tile(k, label))
+            self.tiles.append(t)
+            self.grid.addWidget(t, k // self.cols, k % self.cols)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._fit_cols()
+
+    def _fit_cols(self):
+        """Jumlah kolom kotak mengikuti lebar area (jendela sempit: lebih sedikit kolom, tanpa gulir ke samping)."""
+        shown = [t.sizeHint().width() for t in self.tiles if t.isVisible()]
+        w = (max(shown) if shown else TILE_W) + self.grid.spacing()
+        cols = max(1, min(KOLOM, (self.scroll.viewport().width() + self.grid.spacing()) // w))
+        if cols != self.cols:
+            self.cols = cols
+            for k, t in enumerate(self.tiles):
+                self.grid.removeWidget(t)
+                self.grid.addWidget(t, k // cols, k % cols)
 
     def _show_page(self):
         labels = self.db.labels()
         dpr = self.devicePixelRatioF()
         its = self._page_items()
+        self._ensure_tiles(len(its))
+        img = self._baca(its[0]["dir"]) if its else None
         for k, t in enumerate(self.tiles):
             c = its[k] if k < len(its) else None
-            t.show_item(c, labels.get((c["file"], c["idx"])) if c else None, k == self.sel, dpr)
-        pages = max(1, -(-len(self.items) // (KOLOM * BARIS)))
-        self.page_lbl.setText(f"Halaman {self.page + 1} / {pages} · {len(self.items)} contoh")
-        self.stack.setCurrentWidget(self.scroll if self.items else self.empty)
+            t.show_item(c, labels.get((c["file"], c["idx"])) if c else None, k == self.sel, dpr, img)
+        n = len(self.sheets)
+        self.page_lbl.setText(f"LJK {self.page + 1} / {max(n, 1)} · {sum(len(s['items']) for s in self.sheets)} contoh")
+        if its:
+            s, row = self.sheets[self.page], self.sheets[self.page]["row"]
+            done = sum(1 for c in its if (c["file"], c["idx"]) in labels)
+            nama = (row["nama"] if row is not None else "") or "-"
+            self.sheet_lbl.setText(f"<b>LJK {self.page + 1} dari {n}</b> · {escape(Path(s['file']).name)} · "
+                                   f"{escape(nama)} · {len(its)} contoh sulit, {done} sudah dilabeli")
+        self.sheet_lbl.setVisible(bool(its))
+        self.stack.setCurrentWidget(self.scroll if self.sheets else self.empty)
         for w in (self.btn_prev, self.page_lbl, self.btn_next):
-            w.setVisible(bool(self.items))
+            w.setVisible(bool(self.sheets))
         self.btn_prev.setEnabled(self.page > 0)
-        self.btn_next.setEnabled(self.page + 1 < pages)
+        self.btn_next.setEnabled(self.page + 1 < n)
+        self._fit_cols()
         if its:
             self.scroll.ensureWidgetVisible(self.tiles[self.sel])     # kotak terpilih selalu terlihat
         self.update_stats()
 
     def _goto(self, page):
-        pages = max(1, -(-len(self.items) // (KOLOM * BARIS)))
-        self.page, self.sel = max(0, min(page, pages - 1)), 0
+        self.page, self.sel = max(0, min(page, len(self.sheets) - 1)), 0
+        self._show_page()
+        self.setFocus()
+
+    def _open_sheet(self, k):
+        """LJK utuh untuk kotak k (klik dua kali / Enter); label yang diberi di sana langsung tersimpan."""
+        if k >= len(self._page_items()):
+            return
+        d = LembarDialog(self, self.sheets[self.page], k)
+        d.exec()
+        self.sel = d.k
         self._show_page()
         self.setFocus()
 
@@ -277,9 +443,11 @@ class LatihTab(QWidget):
         elif key == Qt.Key_Left:
             self._select(max(self.sel - 1, 0))
         elif key == Qt.Key_Down:
-            self._select(min(self.sel + KOLOM, len(its) - 1))
+            self._select(min(self.sel + self.cols, len(its) - 1))
         elif key == Qt.Key_Up:
-            self._select(max(self.sel - KOLOM, 0))
+            self._select(max(self.sel - self.cols, 0))
+        elif key in (Qt.Key_Return, Qt.Key_Enter):
+            self._open_sheet(self.sel)
         else:
             super().keyPressEvent(e)
 

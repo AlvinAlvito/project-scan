@@ -196,10 +196,11 @@ def describe(c):
     return f"{'Nomor' if g == 'nomor' else 'Kode'} digit {i + 1} - {v}"
 
 
-def context_image(d, xy, scale=3.0, r=40):
+def context_image(d, xy, scale=3.0, r=40, img=None):
     """Potongan gambar baca di sekitar bulatan (tetangganya ikut terlihat), diperbesar,
-    dengan lingkaran tipis biru di bulatan yang ditanya."""
-    img = read_image(d)
+    dengan lingkaran tipis biru di bulatan yang ditanya. img: gambar baca lembar itu bila sudah dibaca."""
+    if img is None:
+        img = read_image(d)
     cx, cy = int(round(xy[0])) + T.PAD, int(round(xy[1])) + T.PAD
     pad = cv2.copyMakeBorder(img, r, r, r, r, cv2.BORDER_CONSTANT, value=(255, 255, 255))
     crop = pad[cy: cy + 2 * r, cx: cx + 2 * r]
