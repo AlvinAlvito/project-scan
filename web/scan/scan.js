@@ -176,42 +176,60 @@ video.addEventListener("click", async () => {      // ketuk layar untuk fokus ul
   try { await state.track?.applyConstraints({ advanced: [{ focusMode: "single-shot" }] }); } catch (e) { /* abaikan */ }
 });
 
-async function captureBlob() {
-  if (state.capture) {
-    try { return await state.capture.takePhoto(); } catch (e) { /* jatuh ke cara cadangan */ }
-  }
+/** Satu frame video resolusi penuh sebagai JPEG (gambar yang sama dengan yang dinilai di layar). */
+function videoFrameBlob() {
   const c = document.createElement("canvas");
   c.width = video.videoWidth; c.height = video.videoHeight;
   c.getContext("2d").drawImage(video, 0, 0);
   return new Promise(res => c.toBlob(res, "image/jpeg", 0.95));
 }
 
-/** Nilai foto (hasil jepretan / galeri) dengan ambang ketajaman ketat untuk foto. */
+async function captureBlob() {
+  if (state.capture) {
+    try { return await state.capture.takePhoto(); } catch (e) { /* jatuh ke frame video */ }
+  }
+  return videoFrameBlob();
+}
+
+/** Nilai foto (hasil jepretan / galeri) dengan ambang ketajaman ketat untuk foto. Foto dianalisis
+ *  pada lebar 960 px: foto kamera jauh lebih besar & lebih lebar dari video, sehingga pada 480 px
+ *  kotak sudutnya terlalu kecil untuk dikenali. */
 async function analyzeBlob(blob) {
   const bmp = await createImageBitmap(blob);
-  const r = measureSharpness(bmp, analyze(grab(bmp, work)), "foto");
+  const r = measureSharpness(bmp, analyze(grab(bmp, work, 960), null, { minArea: 0.03 }), "foto");
+  r.metrics.foto = `${bmp.width}x${bmp.height}`;
   bmp.close && bmp.close();
   return r;
 }
 
-async function takePhoto(liveResult) {
+async function takePhoto() {
   if (state.busy) return;
   state.busy = true;
   $("#b-shutter").disabled = true;
   const fl = document.createElement("div"); fl.className = "flash"; $("#v-kamera").append(fl); setTimeout(() => fl.remove(), 400);
   try {
-    const blob = await captureBlob();
+    let blob = await captureBlob();
     let r;
     try { r = await analyzeBlob(blob); } catch (e) { r = null; }
-    // foto hasil jepretan bisa buram walau tampilan live tajam (HP bergerak / fokus ulang saat memotret):
-    // jangan kirim, minta ulang
+    if ((!r || !r.ready) && video.videoWidth) {
+      // Foto kamera (ImageCapture) di sebagian HP berbeda dari tampilan live (bidang pandang, orientasi,
+      // fokus ulang). Coba frame video yang barusan dinilai siap; tetap dinilai dengan ambang foto.
+      const vblob = await videoFrameBlob();
+      let vr = null;
+      try { vr = await analyzeBlob(vblob); } catch (e) { vr = null; }
+      if (vr && vr.ready) {
+        vr.metrics.sumber = "video";
+        vr.metrics.foto_gagal = r ? (r.gates.sudut ? r.tip.title : "sudut tidak terlihat") + " " + (r.metrics.foto || "") : "tidak terbaca";
+        blob = vblob; r = vr;
+      }
+    }
+    // foto bisa buram walau tampilan live tajam (HP bergerak saat memotret): jangan kirim, minta ulang
     if (!r || !r.ready) {
       const why = !r ? "Foto tidak bisa dinilai." : !r.gates.sudut ? "4 kotak sudut tidak terlihat di foto."
         : r.sub.tajam < 0.6 ? "Foto hasil jepretan buram." : r.tip.title + ".";
-      toast(`${why} Foto tidak dikirim, silakan ulangi dan tahan HP tetap diam.`, true);
+      toast(`${why} Foto tidak dikirim, silakan ulangi dan tahan HP tetap diam. [${r?.metrics.foto || "-"}]`, true);
       return;
     }
-    void liveResult;
     await send(blob, r);
   } catch (e) {
     toast(e.message || "Gagal mengambil foto.", true);
