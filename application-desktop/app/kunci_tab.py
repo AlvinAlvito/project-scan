@@ -99,9 +99,9 @@ class KunciTab(QWidget):
                 self._append(s.kode, s.bidang, s.kunci, sumber=s.sumber)
         self.table.blockSignals(False)
         self._set_dirty(False)
-        self._show_server_bidang()
+        self.show_server_bidang()
 
-    def _show_server_bidang(self):
+    def show_server_bidang(self):
         """Tampilkan bidang server yang kode naskahnya belum ada di tabel kunci."""
         while self.srv_buttons.count():
             w = self.srv_buttons.takeAt(0).widget()
@@ -131,7 +131,7 @@ class KunciTab(QWidget):
         r = self.table.rowCount() - 1
         self.table.setCurrentCell(r, COL_KODE)
         self._edit_row(r, new=True, jumlah=int(b.get("jumlah_soal") or 0))
-        self._show_server_bidang()
+        self.show_server_bidang()
 
     def _append(self, kode, bidang, kunci, note="", sumber="", warn=None):
         r = self.table.rowCount()

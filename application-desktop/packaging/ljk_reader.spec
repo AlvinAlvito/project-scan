@@ -11,7 +11,7 @@ a = Analysis(
     pathex=[str(ROOT), str(ENGINE)],
     datas=[(str(ENGINE / "ljk" / "ref"), "ljk/ref")],   # sidik jari blok
     hiddenimports=["app.window", "app.kunci_tab", "app.scan_tab", "app.review_tab", "app.imageview",
-                   "app.theme", "app.icons", "app.widgets", "app.server_client", "app.server_dialog",
+                   "app.theme", "app.icons", "app.widgets", "app.server_client", "app.server_dialog", "app.server_link",
                    "PySide6.QtSvg"],
     excludes=["tkinter", "matplotlib", "IPython", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia"],

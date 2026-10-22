@@ -93,11 +93,15 @@ class DB:
             self.con.execute("UPDATE event SET server_kompetisi_id=?, server_url=? WHERE id=?",
                              (kompetisi_id, url, event_id))
 
+    def event_for_kompetisi(self, url, kompetisi_id):
+        """Event desktop yang terhubung ke kompetisi server ini, atau None."""
+        return self.con.execute("SELECT * FROM event WHERE server_kompetisi_id=? AND server_url=?",
+                                (kompetisi_id, url)).fetchone()
+
     def upsert_server_event(self, url, kompetisi_id, nama, tanggal, bidang):
         """Event lokal untuk satu kompetisi server: dibuat bila belum ada, nama/tanggal/bidang diperbarui
         bila sudah ada. Mengembalikan (event_id, dibuat_baru)."""
-        row = self.con.execute("SELECT id FROM event WHERE server_kompetisi_id=? AND server_url=?",
-                               (kompetisi_id, url)).fetchone()
+        row = self.event_for_kompetisi(url, kompetisi_id)
         bj = json.dumps(bidang)
         with self.con:
             if row:

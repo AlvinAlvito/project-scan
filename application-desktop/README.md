@@ -73,8 +73,8 @@ ditarik ke event desktop:
 
 1. **Hubungkan server** (sidebar kiri bawah): alamat server + akun superadmin. Token login disimpan,
    kata sandi tidak.
-2. Buka event, tab **Scan & Nilai** → **Sinkron server**. Pertama kali, pilih kompetisi server
-   yang dihubungkan dengan event ini.
+2. Buka event, tab **Scan & Nilai** → **Sinkron server**. Pertama kali, event dihubungkan ke
+   kompetisi server (baru atau yang sudah ada; lihat bagian berikut).
 3. Lembar yang sudah dikonfirmasi/ditandai admin daerah diunduh dan dibaca ulang di laptop
    (mesin yang sama). Data yang dikoreksi admin daerah dipakai, hasil baca asli tetap tampil
    sebagai "terbaca: …" di Cek Manual. Catatan server (nomor tidak terdaftar, duplikat, koreksi,
@@ -84,6 +84,23 @@ ditarik ke event desktop:
 
 Kunci jawaban tetap hanya di desktop; isi seperti biasa di tab Kunci Jawaban dengan kode naskah
 yang sama dengan bidang di server.
+
+### Mengirim event desktop ke server
+
+Kompetisi yang dibuat di web otomatis menjadi event desktop (label "· server"). Arah sebaliknya
+lewat tombol **awan-unggah** di samping judul EVENT (sidebar):
+
+- **Event belum terhubung**: pilih *Buat kompetisi baru* (nama & tanggal event ini), atau gabungkan
+  dengan kompetisi yang sudah ada (kompetisi bernama sama dipilih otomatis). Bidang dari Kunci
+  Jawaban ikut dikirim: kode naskah, nama bidang, jumlah soal. **Kunci jawaban tidak dikirim.**
+- **Event sudah terhubung**: hanya menambah bidang yang kode naskahnya belum ada di server. Bidang
+  server tidak pernah diubah atau dihapus dari desktop; perbedaan nama/jumlah soal hanya dilaporkan.
+
+Setelah terhubung, nama, tanggal, dan daftar bidang mengikuti server; lokasi, peserta, dan akun admin
+daerah diatur di panel admin web. Satu kompetisi hanya terhubung ke satu event desktop: menggabungkan
+dengan kompetisi yang event desktopnya masih kosong menggantikan event kosong itu, sedangkan kompetisi
+yang event desktopnya sudah berisi kunci/lembar tidak bisa dipilih (supaya lembar yang ditarik tidak
+terbelah ke dua event). Menghapus event di desktop tidak menghapus kompetisi di server, begitu pula sebaliknya.
 
 ## Mengajari model membaca bulatan (tab "4. Latih Model")
 

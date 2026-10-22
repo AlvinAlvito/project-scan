@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QHeaderView, QL
 from app import server_client as SC
 from app import theme
 from app.colors import paint
-from app.server_dialog import KompetisiDialog, ServerDialog
+from app import server_link as SL
+from app.server_dialog import ServerDialog
 from app.widgets import EmptyState, StatCard, divider, setup_table, toolbar
 from ljk import service as SV
 
@@ -328,19 +329,13 @@ class ScanTab(QWidget):
         ev = self.db.event(self.event_id)
         url = SC.config()["url"]
         kid = ev["server_kompetisi_id"] if ev["server_url"] == url else None
+        if not kid:                     # pertama kali: hubungkan ke kompetisi baru atau yang sudah ada
+            kid = SL.kirim(self, self.db, self.data_dir, self.event_id)
+            if kid is None:
+                return
+            self.linked.emit()
         done = []
         try:
-            if not kid:
-                d = KompetisiDialog(self, SC.kompetisi())
-                if not d.list.count():
-                    QMessageBox.information(self, "Sinkron server",
-                                            "Belum ada kompetisi di server. Buat dulu di panel admin web.")
-                    return
-                if not d.exec() or not d.selected():
-                    return
-                kid = d.selected()["id"]
-                self.db.link_server(self.event_id, kid, url)
-                self.linked.emit()
             done = self.db.dicek_unsynced(self.event_id)
             if done:
                 SC.mark_checked(done)

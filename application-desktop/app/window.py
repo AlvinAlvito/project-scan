@@ -7,12 +7,12 @@ from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineE
                                QMainWindow, QMessageBox, QStackedWidget, QStyle, QStyledItemDelegate, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from app import icons, server_client as SC, theme
+from app import icons, server_client as SC, server_link as SL, theme
 from app.kunci_tab import KunciTab
 from app.latih_tab import LatihTab
 from app.review_tab import ReviewTab
 from app.scan_tab import ScanTab
-from app.server_dialog import ServerDialog, fmt_date
+from app.server_dialog import ServerDialog
 from app.widgets import EmptyState
 
 TABS = (("key", "Kunci Jawaban"), ("scan", "Scan && Nilai"), ("clipboard-check", "Cek Manual"),
@@ -147,9 +147,10 @@ class MainWindow(QMainWindow):
         sec.addStretch()
         self.btn_refresh = theme.button("", "refresh", "icon", "Ambil kompetisi terbaru dari server",
                                         lambda: self._sync_server_events(manual=True))
+        self.btn_push = theme.button("", "cloud-upload", "icon", "Kirim event ke server", self._push_event)
         self.btn_edit = theme.button("", "pencil", "icon", "Ubah event", self._edit_event)
         self.btn_delete = theme.button("", "trash", "icon", "Hapus event", self._delete_event)
-        for b in (self.btn_refresh, self.btn_edit, self.btn_delete):
+        for b in (self.btn_refresh, self.btn_push, self.btn_edit, self.btn_delete):
             b.setFixedSize(32, 32)
             b.setIconSize(QSize(16, 16))
             sec.addWidget(b)
@@ -208,7 +209,7 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._tab_changed)
         self.kunci.changed.connect(self.scan.refresh)
         self.scan.open_review.connect(self._open_review)
-        self.scan.linked.connect(self._update_header)
+        self.scan.linked.connect(self._event_linked)
         self.review.changed.connect(self.scan.refresh)
 
         self.empty = EmptyState("calendar", "Belum ada event",
@@ -248,12 +249,16 @@ class MainWindow(QMainWindow):
         theme.refresh_all()
 
     # ---- event
+    @staticmethod
+    def _event_text(ev):
+        srv = " · server" if ev["server_kompetisi_id"] and ev["server_url"] else ""
+        return f"{ev['nama']}\n{ev['tanggal']}{srv}"
+
     def _load_events(self, select=None):
         self.events.blockSignals(True)
         self.events.clear()
         for ev in self.db.events():
-            srv = " · server" if ev["server_kompetisi_id"] and ev["server_url"] else ""
-            it = QListWidgetItem(f"{ev['nama']}\n{ev['tanggal']}{srv}")
+            it = QListWidgetItem(self._event_text(ev))
             it.setData(Qt.UserRole, ev["id"])
             it.setToolTip(ev["nama"])
             self.events.addItem(it)
@@ -274,6 +279,7 @@ class MainWindow(QMainWindow):
         self.event_id = event_id
         has = event_id is not None
         self.stack.setCurrentWidget(self.tabs if has else self.empty)
+        self.btn_push.setEnabled(has)
         self.btn_edit.setEnabled(has)
         self.btn_delete.setEnabled(has)
         self._update_header()
@@ -292,6 +298,8 @@ class MainWindow(QMainWindow):
         linked = ev["server_kompetisi_id"] and ev["server_url"]
         self.subtitle.setText(ev["tanggal"] + (f"  ·  terhubung ke server (kompetisi #{ev['server_kompetisi_id']})"
                                                if linked else ""))
+        self.btn_push.setToolTip("Kirim bidang baru dari Kunci Jawaban ke kompetisi server" if linked else
+                                 "Kirim event ke server (menjadi kompetisi)")
 
     def _update_server_button(self):
         c = SC.config()
@@ -323,9 +331,7 @@ class MainWindow(QMainWindow):
         url = SC.config()["url"]
         baru = 0
         for k in items:
-            bidang = [{"kode_naskah": b["kode_naskah"], "nama": b["nama"], "jumlah_soal": b["jumlah_soal"]}
-                      for b in k.get("bidang", [])]
-            _eid, created = self.db.upsert_server_event(url, k["id"], k["nama"], fmt_date(k["tanggal"]), bidang)
+            _eid, created = SL.apply_kompetisi(self.db, url, k)
             baru += created
         self._load_events(select=self.event_id)
         if manual:
@@ -336,6 +342,35 @@ class MainWindow(QMainWindow):
         self._update_server_button()
         if manual:
             QMessageBox.warning(self, "Server", msg)
+
+    # ---- event desktop -> kompetisi server
+    def _push_event(self):
+        if self.event_id is None:
+            return
+        if not self.kunci.confirm_leave():
+            QMessageBox.information(self, "Kirim ke server", "Simpan dulu perubahan di Kunci Jawaban; "
+                                                             "bidang yang dikirim diambil dari kunci yang tersimpan.")
+            return
+        kid = SL.kirim(self, self.db, self.data_dir, self.event_id)
+        self._update_server_button()
+        if kid is not None:
+            self._event_linked()
+
+    def _event_linked(self):
+        """Event yang dibuka baru dihubungkan/dikirim ke server: perbarui daftar event tanpa berpindah event
+        (event kosong yang digantikan hilang dari daftar), judul, dan bidang server di tab Kunci."""
+        rows = {ev["id"]: ev for ev in self.db.events()}
+        self.events.blockSignals(True)
+        for i in reversed(range(self.events.count())):
+            it = self.events.item(i)
+            ev = rows.get(it.data(Qt.UserRole))
+            if ev is None:
+                self.events.takeItem(i)
+            else:
+                it.setText(self._event_text(ev))
+        self.events.blockSignals(False)
+        self._update_header()
+        self.kunci.show_server_bidang()
 
     def _new_event(self):
         d = EventDialog(self)

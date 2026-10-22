@@ -1,4 +1,7 @@
-"""Dialog koneksi ke server LJK Reader Online dan pemilihan kompetisi server untuk sebuah event."""
+"""Dialog koneksi ke server LJK Reader Online dan pengiriman event desktop ke kompetisi server."""
+import re
+from datetime import date
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMessageBox, QVBoxLayout)
@@ -18,6 +21,30 @@ def fmt_date(s):
         return f"{d} {BULAN[m - 1]} {y}"
     except (ValueError, IndexError):
         return s or ""
+
+
+_BULAN3 = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "mei": 5, "may": 5, "jun": 6, "jul": 7, "agu": 8, "agt": 8,
+           "aug": 8, "sep": 9, "okt": 10, "oct": 10, "nov": 11, "des": 12, "dec": 12}
+
+
+def iso_date(s):
+    """Kebalikan fmt_date: '20 OKTOBER 2026', '16/10/2026', '2026-10-16' -> '2026-10-16'.
+    None bila teks tidak dikenali sebagai tanggal."""
+    s = (s or "").strip()
+    if m := re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", s):
+        y, mo, d = map(int, m.groups())
+    elif m := re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", s):
+        d, mo, y = map(int, m.groups())
+    elif m := re.fullmatch(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", s):
+        d, mo, y = int(m[1]), _BULAN3.get(m[2][:3].lower()), int(m[3])
+        if mo is None:
+            return None
+    else:
+        return None
+    try:
+        return date(y, mo, d).isoformat()
+    except ValueError:
+        return None
 
 
 class ServerDialog(QDialog):
@@ -94,43 +121,101 @@ class ServerDialog(QDialog):
         self._update()
 
 
-class KompetisiDialog(QDialog):
-    """Pilih kompetisi di server yang dihubungkan dengan event desktop ini."""
+def same_name(a, b):
+    return " ".join((a or "").split()).casefold() == " ".join((b or "").split()).casefold()
 
-    def __init__(self, parent, items, current=None):
+
+class KirimDialog(QDialog):
+    """Event desktop yang belum terhubung -> kompetisi server: buat kompetisi baru, atau gabungkan dengan
+    kompetisi yang sudah ada. Kompetisi yang sudah dipakai event desktop lain berisi data tidak bisa dipilih
+    (satu kompetisi hanya boleh terhubung ke satu event, supaya lembar yang ditarik tidak terbelah)."""
+
+    NEW = "baru"
+
+    def __init__(self, parent, ev, n_bidang, items, taken):
+        """items: kompetisi di server. taken: {kompetisi_id: (event desktop lain yang terhubung, berisi data?)}."""
         super().__init__(parent)
-        self.setWindowTitle("Hubungkan ke kompetisi server")
+        self.setWindowTitle("Kirim event ke server")
+        self.ev, self.taken = ev, taken
         v = QVBoxLayout(self)
         v.setContentsMargins(24, 22, 24, 20)
         v.setSpacing(12)
-        t = QLabel("Pilih kompetisi di server")
+        t = QLabel("Kirim event ke server")
         t.setProperty("role", "title")
         v.addWidget(t)
-        s = QLabel("LJK yang dikirim admin daerah untuk kompetisi ini akan ditarik ke event yang sedang dibuka.")
+        what = (f"{n_bidang} bidang (kode naskah, nama bidang, jumlah soal)" if n_bidang else
+                "belum ada bidang: isi Kunci Jawaban dulu bila bidangnya ingin ikut terkirim")
+        s = QLabel(f"Yang dikirim: nama event, tanggal, dan {what}. Kunci jawaban tidak dikirim.")
         s.setProperty("role", "muted")
         s.setWordWrap(True)
         v.addWidget(s)
+
         self.list = QListWidget()
+        new = QListWidgetItem(f"Buat kompetisi baru\n{ev['nama']}  ·  {ev['tanggal'] or '-'}")
+        new.setData(Qt.UserRole, self.NEW)
+        self.list.addItem(new)
+        match = None
+        if items:
+            head = QListWidgetItem("Atau gabungkan dengan kompetisi yang sudah ada:")
+            head.setFlags(Qt.NoItemFlags)
+            self.list.addItem(head)
         for k in items:
             bidang = ", ".join(f"{b['nama']} ({b['kode_naskah']})" for b in k["bidang"]) or "belum ada bidang"
-            it = QListWidgetItem(f"{k['nama']}  ·  {fmt_date(k['tanggal']) or '-'}  ·  {len(k['lokasi'])} lokasi\n{bidang}")
+            line2 = bidang
+            it = QListWidgetItem()
             it.setData(Qt.UserRole, k)
+            other, has_data = taken.get(k["id"], (None, False))
+            if other is not None and has_data:
+                line2 = f"sudah dipakai event '{other['nama']}' di desktop"
+                it.setFlags(Qt.NoItemFlags)
+                it.setToolTip("Satu kompetisi hanya boleh terhubung ke satu event desktop.")
+            it.setText(f"{k['nama']}  ·  {fmt_date(k['tanggal']) or '-'}  ·  {len(k['lokasi'])} lokasi\n{line2}")
             self.list.addItem(it)
-            if k["id"] == current:
-                self.list.setCurrentItem(it)
-        if self.list.currentRow() < 0 and self.list.count():
-            self.list.setCurrentRow(0)
+            if match is None and it.flags() & Qt.ItemIsEnabled and same_name(k["nama"], ev["nama"]):
+                match = it
+        self.list.setCurrentItem(match or new)
+        self.list.currentItemChanged.connect(lambda *_: self._hint())
         self.list.itemDoubleClicked.connect(lambda _i: self.accept())
         v.addWidget(self.list, 1)
+        self.hint = QLabel("")
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setProperty("role", "muted")
+        self.hint.setWordWrap(True)
+        v.addWidget(self.hint)
+        self._same = any(same_name(k["nama"], ev["nama"]) for k in items)
+
         bar = QHBoxLayout()
         bar.addStretch()
         bar.addWidget(theme.button("Batal", variant="ghost", slot=self.reject))
-        ok = theme.button("Hubungkan", "check", "primary", slot=self.accept)
+        ok = theme.button("Kirim", "cloud-upload", "primary", slot=self.accept)
         ok.setDefault(True)
         bar.addWidget(ok)
         v.addLayout(bar)
-        self.resize(560, 420)
+        self.resize(600, 460)
+        self._hint()
+
+    def _hint(self):
+        k = self.selected()
+        if k is None:
+            text = ""
+        elif k == self.NEW:
+            text = ("Kompetisi baru dibuat dengan nama dan tanggal event ini. Lokasi, peserta, dan akun admin "
+                    "daerah dilengkapi di panel admin web.")
+            if self._same:
+                text = "Sudah ada kompetisi bernama sama di server. " + text
+        else:
+            text = ("Event ini dihubungkan ke kompetisi itu; nama dan tanggalnya mengikuti server. Bidang dari Kunci "
+                    "Jawaban yang kode naskahnya belum ada di server ditambahkan; bidang server tidak diubah.")
+            other, _has = self.taken.get(k["id"], (None, False))
+            if other is not None:
+                text += f" Event kosong '{other['nama']}' di desktop yang dibuat otomatis untuk kompetisi ini diganti."
+        self.hint.setText(text)
+
+    def accept(self):
+        if self.selected() is not None:
+            super().accept()
 
     def selected(self):
+        """KirimDialog.NEW, data kompetisi yang dipilih, atau None."""
         it = self.list.currentItem()
-        return it.data(Qt.UserRole) if it else None
+        return it.data(Qt.UserRole) if it and it.flags() & Qt.ItemIsEnabled else None

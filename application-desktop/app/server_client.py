@@ -59,6 +59,8 @@ def _request(method, path, body=None, token=None, url=None, raw=False):
             detail = json.loads(e.read() or b"{}").get("detail")
         except ValueError:
             detail = None
+        if isinstance(detail, list):      # galat validasi FastAPI: daftar {loc, msg, ...}
+            detail = "; ".join(d.get("msg", "") for d in detail if isinstance(d, dict)) or None
         if e.code == 401:
             save_config(token="")
             raise ServerError(detail or "Sesi server berakhir. Login lagi.")
@@ -82,6 +84,21 @@ def logout():
 
 def kompetisi():
     return _request("GET", "/api/sync/kompetisi")
+
+
+def get_kompetisi(kompetisi_id):
+    return _request("GET", f"/api/admin/kompetisi/{kompetisi_id}")
+
+
+def create_kompetisi(nama, tanggal):
+    return _request("POST", "/api/admin/kompetisi", {"nama": nama, "tanggal": tanggal, "status": "aktif"})
+
+
+def add_bidang(kompetisi_id, kode_naskah, nama, jumlah_soal):
+    """Tambah satu bidang ke kompetisi server. Sengaja hanya kode, nama, dan jumlah soal:
+    kunci jawaban tidak pernah dikirim ke server."""
+    return _request("POST", f"/api/admin/kompetisi/{kompetisi_id}/bidang",
+                    {"kode_naskah": kode_naskah, "nama": nama, "jumlah_soal": jumlah_soal})
 
 
 def pending(kompetisi_id, semua=False):
