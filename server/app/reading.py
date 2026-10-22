@@ -56,13 +56,25 @@ def sharpness_baku(cek_path):
     return round(float(cv2.Laplacian(c, cv2.CV_32F).var() / max(p95 - p5, 1) ** 2 * 1000), 1)
 
 
+# Catatan pelurusan yang hanya informatif: pola merah blok tidak dikenali (mis. cetakan merah pucat),
+# mesin lalu memakai garis tepi kiri dan hasilnya tetap benar. Catatan ini tetap diteruskan ke desktop
+# untuk dicek, tetapi tidak membuat foto ditolak.
+INFO_NOTES = ("pola blok lemah", "pola blok sulit dikenali")
+
+
+def serious_notes(rec):
+    """Catatan pelurusan yang bisa berarti jawaban bergeser baris."""
+    return [i["text"] for i in rec.get("baca", {}).get("issues", [])
+            if i.get("key") == "foto" and not any(k in i["text"] for k in INFO_NOTES)]
+
+
 def photo_problem(rec, kualitas):
     """Pesan penolakan bila foto terlalu buruk untuk dibaca dengan yakin, selain itu None.
     Foto ditolak (admin daerah diminta foto ulang) daripada diterima dengan hasil baca meragukan."""
     if rec.get("error"):
         return None
     tajam = kualitas.get("tajam_baku")
-    catatan = [i for i in rec.get("baca", {}).get("issues", []) if i.get("key") == "foto"]
+    catatan = serious_notes(rec)
     if tajam is not None and tajam < MIN_SHARPNESS:
         return ("Foto buram, tulisan dan bulatan tidak tajam. Foto ulang: tahan HP tetap diam, "
                 "ketuk layar untuk fokus, dan pastikan cahaya cukup.")
@@ -87,7 +99,7 @@ def keyakinan(rec, jumlah_soal):
         elif key.startswith("soal:") and int(key.split(":")[1]) <= n:
             skor -= 4
         elif key == "foto":
-            skor -= 10
+            skor -= 3 if any(k in i.get("text", "") for k in INFO_NOTES) else 10
     return max(0, min(100, skor))
 
 

@@ -1,7 +1,7 @@
 // Web HP admin daerah: pilih kompetisi -> kamera dengan pemandu kualitas -> kirim -> konfirmasi hasil baca.
 import { api, esc, fileUrl, icon, logout, modal, pctBadge, requireLogin, statusBadge, toast,
   toggleTheme, currentTheme, confirmBox, fmtDate } from "/static/js/common.js";
-import { analyze, grab, measureSharpness, CHIPS, chipState } from "./quality.js";
+import { analyze, grab, measureSharpness, fitFrame, FRAME_ASPECT, ANALYSIS_WIDTH, CHIPS, chipState } from "./quality.js";
 import { queue, flush } from "./queue.js";
 
 const $ = s => document.querySelector(s);
@@ -84,14 +84,14 @@ async function startCamera() {
   }
   if (!state.stream) {
     try {
+      // Resolusi setinggi yang didukung HP: gambar yang dikirim adalah potongan bingkai dari video ini.
       state.stream = await navigator.mediaDevices.getUserMedia({ audio: false,
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
     } catch (e) {
       camMessage("Kamera tidak bisa dibuka. Izinkan akses kamera di pengaturan browser, lalu muat ulang halaman.");
       return;
     }
     state.track = state.stream.getVideoTracks()[0];
-    state.capture = "ImageCapture" in window ? new ImageCapture(state.track) : null;
     const caps = state.track.getCapabilities ? state.track.getCapabilities() : {};
     $("#b-torch").hidden = !caps.torch;
     try { await state.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch (e) { /* tidak didukung */ }
@@ -105,7 +105,7 @@ async function startCamera() {
 function stopCamera() {
   clearInterval(state.timer);
   state.timer = null;
-  if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; state.track = null; state.capture = null; }
+  if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; state.track = null; }
   video.srcObject = null;
 }
 function camMessage(html) { const m = $("#cam-msg"); m.innerHTML = `<div>${html}</div>`; m.hidden = false; }
@@ -114,7 +114,8 @@ function tick() {
   if (state.busy || !video.videoWidth) return;
   const img = grab(video, work);
   if (!img) return;
-  const r = measureSharpness(video, analyze(img, state.prev), "live");
+  const L = frameLayout();
+  const r = fitFrame(measureSharpness(video, analyze(img, state.prev), "live"), L.analysis);
   state.prev = r;
   state.smooth = state.smooth ? Math.round(state.smooth * 0.55 + r.score * 0.45) : r.score;
   renderGuide(r);
@@ -137,32 +138,56 @@ function renderGuide(r) {
   const tip = $("#tip");
   tip.className = "tip" + (r.tip.key === "ok" && r.ready ? " ok" : "");
   tip.innerHTML = `<b>${esc(r.tip.title)}</b><span>${esc(r.tip.text)}</span>`;
-  // gambar garis 4 sudut di atas video (video memakai object-fit: contain, jadi seluruh gambar kamera terlihat)
-  const cw = overlay.clientWidth, ch = overlay.clientHeight, dpr = devicePixelRatio || 1;
-  if (overlay.width !== cw * dpr) { overlay.width = cw * dpr; overlay.height = ch * dpr; }
+  // bingkai panduan (seperti scan KTP): area di luar bingkai digelapkan, penanda sudut hijau bila pas
+  const L = frameLayout(), dpr = devicePixelRatio || 1;
+  if (overlay.width !== Math.round(L.cw * dpr)) { overlay.width = Math.round(L.cw * dpr); overlay.height = Math.round(L.ch * dpr); }
   const ctx = overlay.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cw, ch);
-  const vw = video.videoWidth, vh = video.videoHeight;
-  const s = Math.min(cw / vw, ch / vh), ox = (cw - vw * s) / 2, oy = (ch - vh * s) / 2, k = vw / r.size.w;
-  const map = pt => [ox + pt.x * k * s, oy + pt.y * k * s];
-  if (r.corners) {
-    const pts = ["tl", "tr", "br", "bl"].map(n => map(r.corners[n]));
-    ctx.beginPath();
-    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.closePath();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = r.ready ? "#4ade80" : "#fbbf24";
-    ctx.fillStyle = r.ready ? "rgba(74,222,128,.12)" : "rgba(251,191,36,.10)";
-    ctx.fill(); ctx.stroke();
-    pts.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fillStyle = ctx.strokeStyle; ctx.fill(); });
-  } else {
-    // bingkai bantu: perkiraan posisi kertas yang ideal
-    const fw = Math.min(cw * 0.86, ch * 0.72 * 0.7), fh = fw / 0.7;
-    ctx.setLineDash([10, 8]); ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,255,.6)";
-    ctx.strokeRect((cw - fw) / 2, (ch - fh) / 2 - 20, fw, fh);
-    ctx.setLineDash([]);
+  ctx.clearRect(0, 0, L.cw, L.ch);
+  const { fx, fy, fw, fh } = L;
+  ctx.fillStyle = "rgba(0,0,0,.55)";
+  ctx.beginPath();
+  ctx.rect(0, 0, L.cw, L.ch);
+  ctx.rect(fx, fy, fw, fh);
+  ctx.fill("evenodd");
+  const pas = r.gates.sudut && r.gates.jarak;
+  const col = r.ready ? "#4ade80" : pas ? "#a3e635" : "#ffffff";
+  ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1;
+  ctx.strokeRect(fx, fy, fw, fh);
+  const b = Math.min(34, fw * 0.12);
+  ctx.strokeStyle = col; ctx.lineWidth = 5; ctx.lineCap = "round";
+  for (const [x, y, sx, sy] of [[fx, fy, 1, 1], [fx + fw, fy, -1, 1], [fx, fy + fh, 1, -1], [fx + fw, fy + fh, -1, -1]]) {
+    ctx.beginPath(); ctx.moveTo(x + sx * b, y); ctx.lineTo(x, y); ctx.lineTo(x, y + sy * b); ctx.stroke();
   }
+  if (r.corners) {           // posisi kotak sudut LJK yang terlihat kamera
+    const k = video.videoWidth / r.size.w;
+    ctx.fillStyle = pas ? "#4ade80" : "#fbbf24";
+    for (const n of ["tl", "tr", "br", "bl"]) {
+      ctx.beginPath();
+      ctx.arc(L.ox + r.corners[n].x * k * L.s, L.oy + r.corners[n].y * k * L.s, 6, 0, 7);
+      ctx.fill();
+    }
+  }
+}
+
+/**
+ * Letak bingkai panduan: berbentuk LJK, sebesar mungkin di area video yang tidak tertutup bar atas
+ * dan panel bawah. Mengembalikan koordinat layar, koordinat video asli, dan koordinat analisis.
+ */
+function frameLayout() {
+  const cw = overlay.clientWidth, ch = overlay.clientHeight;
+  const vw = video.videoWidth || 1080, vh = video.videoHeight || 1920;
+  const s = Math.min(cw / vw, ch / vh), ox = (cw - vw * s) / 2, oy = (ch - vh * s) / 2;
+  const top = Math.max(oy, document.querySelector(".cam-top").offsetHeight) + 8;
+  const bottom = Math.min(oy + vh * s, ch - document.querySelector(".cam-bottom").offsetHeight + 24) - 8;
+  let fh = Math.max(120, (bottom - top) * 0.96), fw = fh * FRAME_ASPECT;
+  const maxW = vw * s * 0.86;     // sisakan tepi gelap di kiri-kanan supaya bingkai jelas terlihat
+  if (fw > maxW) { fw = maxW; fh = fw / FRAME_ASPECT; }
+  const fx = ox + (vw * s - fw) / 2, fy = top + Math.max(0, (bottom - top - fh) / 2);
+  const v = { x0: (fx - ox) / s, y0: (fy - oy) / s, x1: (fx + fw - ox) / s, y1: (fy + fh - oy) / s };   // px video
+  const a = ANALYSIS_WIDTH / vw;                                                                       // px analisis
+  return { cw, ch, s, ox, oy, fx, fy, fw, fh, video: v,
+           analysis: { x0: v.x0 * a, y0: v.y0 * a, x1: v.x1 * a, y1: v.y1 * a } };
 }
 
 $("#b-shutter").onclick = () => takePhoto(state.prev);
@@ -176,19 +201,17 @@ video.addEventListener("click", async () => {      // ketuk layar untuk fokus ul
   try { await state.track?.applyConstraints({ advanced: [{ focusMode: "single-shot" }] }); } catch (e) { /* abaikan */ }
 });
 
-/** Satu frame video resolusi penuh sebagai JPEG (gambar yang sama dengan yang dinilai di layar). */
-function videoFrameBlob() {
+/** Potongan bingkai (plus sedikit margin untuk garis tepi kiri) dari frame video resolusi penuh,
+ *  sebagai JPEG. Ini persis gambar yang dilihat & dinilai di layar, dengan LJK memenuhi gambar. */
+function frameBlob() {
+  const L = frameLayout(), v = L.video, vw = video.videoWidth, vh = video.videoHeight;
+  const m = (v.x1 - v.x0) * 0.07;
+  const x0 = Math.max(0, Math.round(v.x0 - m)), y0 = Math.max(0, Math.round(v.y0 - m));
+  const x1 = Math.min(vw, Math.round(v.x1 + m)), y1 = Math.min(vh, Math.round(v.y1 + m));
   const c = document.createElement("canvas");
-  c.width = video.videoWidth; c.height = video.videoHeight;
-  c.getContext("2d").drawImage(video, 0, 0);
+  c.width = x1 - x0; c.height = y1 - y0;
+  c.getContext("2d").drawImage(video, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
   return new Promise(res => c.toBlob(res, "image/jpeg", 0.95));
-}
-
-async function captureBlob() {
-  if (state.capture) {
-    try { return await state.capture.takePhoto(); } catch (e) { /* jatuh ke frame video */ }
-  }
-  return videoFrameBlob();
 }
 
 /** Nilai foto (hasil jepretan / galeri) dengan ambang ketajaman ketat untuk foto. Foto dianalisis
@@ -208,26 +231,18 @@ async function takePhoto() {
   $("#b-shutter").disabled = true;
   const fl = document.createElement("div"); fl.className = "flash"; $("#v-kamera").append(fl); setTimeout(() => fl.remove(), 400);
   try {
-    let blob = await captureBlob();
+    const blob = await frameBlob();
     let r;
     try { r = await analyzeBlob(blob); } catch (e) { r = null; }
-    if ((!r || !r.ready) && video.videoWidth) {
-      // Foto kamera (ImageCapture) di sebagian HP berbeda dari tampilan live (bidang pandang, orientasi,
-      // fokus ulang). Coba frame video yang barusan dinilai siap; tetap dinilai dengan ambang foto.
-      const vblob = await videoFrameBlob();
-      let vr = null;
-      try { vr = await analyzeBlob(vblob); } catch (e) { vr = null; }
-      if (vr && vr.ready) {
-        vr.metrics.sumber = "video";
-        vr.metrics.foto_gagal = r ? (r.gates.sudut ? r.tip.title : "sudut tidak terlihat") + " " + (r.metrics.foto || "") : "tidak terbaca";
-        blob = vblob; r = vr;
-      }
-    }
-    // foto bisa buram walau tampilan live tajam (HP bergerak saat memotret): jangan kirim, minta ulang
-    if (!r || !r.ready) {
+    if (r) { r.metrics.sumber = "bingkai"; r.metrics.video = `${video.videoWidth}x${video.videoHeight}`; }
+    // Potongan bingkai = gambar yang barusan dinilai siap di layar; cahaya & bayangan sudah lolos di sana.
+    // Yang dipastikan ulang: semua syarat wajib dan ketajaman dengan ambang ketat (HP bisa bergerak saat memotret).
+    const lolos = r && Object.values(r.gates).every(Boolean) && r.sub.tajam >= 0.6;
+    if (!lolos) {
+      const gagal = r && Object.entries(r.gates).find(([, v]) => !v);
       const why = !r ? "Foto tidak bisa dinilai." : !r.gates.sudut ? "4 kotak sudut tidak terlihat di foto."
-        : r.sub.tajam < 0.6 ? "Foto hasil jepretan buram." : r.tip.title + ".";
-      toast(`${why} Foto tidak dikirim, silakan ulangi dan tahan HP tetap diam. [${r?.metrics.foto || "-"}]`, true);
+        : gagal ? `${r.tip.title}.` : "Foto hasil jepretan buram.";
+      toast(`${why} Foto tidak dikirim, ulangi dan tahan HP tetap diam. [${r?.metrics.foto || "-"} ${gagal ? gagal[0] : "tajam " + (r?.metrics.tajam ?? "-")}]`, true);
       return;
     }
     await send(blob, r);

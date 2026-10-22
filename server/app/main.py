@@ -8,6 +8,18 @@ from .db import Base, engine
 from .routers import admin, auth, files, scan, sync
 
 app = FastAPI(title="LJK Reader Online", version="1.0")
+
+
+@app.middleware("http")
+async def _no_stale_web(request, call_next):
+    """Halaman & skrip web selalu dicek ulang ke server (ETag), supaya HP tidak memakai versi lama
+    setelah diperbarui. Gambar lembar tetap boleh di-cache."""
+    resp = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 for r in (auth.router, admin.router, scan.router, sync.router, files.router):
     app.include_router(r)
 

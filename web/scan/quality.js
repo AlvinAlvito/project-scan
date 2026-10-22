@@ -401,7 +401,7 @@ function pickTip(g, s, terang) {
   if (terang > LIMITS.terangLebih)
     return { key: "terang", title: "Terlalu terang", text: "Hindari cahaya langsung yang terlalu kuat." };
   if (!g.sudut && s.tajam < 0.3) return { key: "tajam", title: "Gambar buram", text: "Tahan HP tetap diam, ketuk layar untuk fokus." };
-  if (!g.sudut) return { key: "sudut", title: "LJK belum terlihat", text: "Arahkan kamera ke LJK sampai 4 kotak hitam di sudut kertas terlihat." };
+  if (!g.sudut) return { key: "sudut", title: "Arahkan LJK ke bingkai", text: "Letakkan LJK di dalam bingkai sampai 4 kotak hitam di sudutnya terlihat." };
   if (!g.utuh) return { key: "utuh", title: "Terlalu dekat", text: "Mundurkan HP sedikit; kotak hitam di sudut jangan terpotong." };
   if (!g.jarak) return { key: "jarak", title: "Kertas terlalu jauh", text: "Dekatkan HP sampai kertas memenuhi bingkai." };
   if (!g.lurus) return { key: "lurus", title: "Kertas miring", text: "Putar HP sampai tepi kertas lurus dengan bingkai." };
@@ -415,7 +415,37 @@ function pickTip(g, s, terang) {
   return { key: "ok", title: "Siap", text: "Tahan sebentar, foto diambil otomatis." };
 }
 
-export const CHIPS = [["terang", "Cahaya"], ["tajam", "Fokus"], ["sudut", "4 sudut"], ["jarak", "Jarak"], ["silau", "Silau"]];
+export const CHIPS = [["terang", "Cahaya"], ["tajam", "Fokus"], ["sudut", "4 sudut"], ["jarak", "Pas bingkai"], ["silau", "Silau"]];
+
+// Bingkai panduan di layar (seperti scan KTP): lebar/tinggi = jarak antar kotak sudut LJK.
+export const FRAME_ASPECT = 0.70;
+export const FIT_TOL = 0.07;     // tiap kotak sudut maks 7% lebar bingkai dari sudut bingkai
+
+/**
+ * Cocokkan 4 kotak sudut LJK dengan bingkai panduan f = {x0, y0, x1, y1} (koordinat analisis).
+ * Syarat "jarak" diganti "pas bingkai", dengan arahan dekat/mundur/geser. Dipanggil paling akhir.
+ */
+export function fitFrame(r, f) {
+  if (!r.corners) return r;
+  const c = r.corners, fw = f.x1 - f.x0;
+  const target = { tl: { x: f.x0, y: f.y0 }, tr: { x: f.x1, y: f.y0 }, bl: { x: f.x0, y: f.y1 }, br: { x: f.x1, y: f.y1 } };
+  const err = Math.max(...["tl", "tr", "bl", "br"].map(k => dist(c[k], target[k]))) / fw;
+  const scale = ((dist(c.tl, c.tr) + dist(c.bl, c.br)) / 2) / fw;
+  const dx = ((c.tl.x + c.tr.x + c.bl.x + c.br.x) / 4 - (f.x0 + f.x1) / 2) / fw;
+  const dy = ((c.tl.y + c.tr.y + c.bl.y + c.br.y) / 4 - (f.y0 + f.y1) / 2) / fw;
+  r.metrics.pas = +err.toFixed(3);
+  r.gates.jarak = err <= FIT_TOL;
+  finish(r);
+  if (r.gates.sudut && r.gates.utuh && !r.gates.jarak && r.tip.key === "jarak") {
+    let text;
+    if (scale < 0.93) text = "Dekatkan HP sampai 4 kotak hitam pas di sudut bingkai.";
+    else if (scale > 1.07) text = "Mundurkan HP sedikit, LJK lebih besar dari bingkai.";
+    else if (Math.abs(dx) >= Math.abs(dy)) text = dx > 0 ? "Geser HP sedikit ke kanan." : "Geser HP sedikit ke kiri.";
+    else text = dy > 0 ? "Geser HP sedikit ke bawah." : "Geser HP sedikit ke atas.";
+    r.tip = { key: "jarak", title: "Pas-kan LJK ke bingkai", text };
+  }
+  return r;
+}
 export function chipState(r, key) {
   if (key in r.gates && key !== "jarak") return r.gates[key];
   if (key === "jarak") return r.gates.jarak && r.gates.utuh;

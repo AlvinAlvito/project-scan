@@ -178,6 +178,9 @@ def handwriting_crops(res, k=CROP_SCALE):
                                            T.KODE_COLS_X[-1] + w, T.KODE_BOX_Y[1]), k)
     out["kotak_tanggal"] = _crop(img, a, Ht, (T.TANGGAL_COLS[0][0] - w, T.TANGGAL_BOX_Y[0],
                                               T.TANGGAL_COLS[-1][0] + w, T.TANGGAL_BOX_Y[1]), k)
+    # Potongan bisa kosong bila areanya jatuh di luar foto (mis. block_map dari pola blok yang lemah);
+    # potongan seperti itu dilewati, jangan sampai membuat seluruh lembar gagal diproses.
+    out = {name: c for name, c in out.items() if c is not None and c.size and min(c.shape[:2]) >= 4}
     if res.image is not None:
         out = {name: TP.enhance_text(c, k) for name, c in out.items()}
     return out
