@@ -13,6 +13,7 @@ from . import export as EX
 from . import nilai as NI
 from . import omr as OM
 from . import pipeline as PL
+from . import tampilan as TP
 from . import template as T
 
 # Gambar cek dibuat dari foto asli resolusi penuh pada 1,5x bingkai baku (dulu 0,75x dari
@@ -60,13 +61,14 @@ def _guess(gr, is_answer):
     return OM.guess_of(gr)
 
 
-def process_photo(path, out_dir):
+def process_photo(path, out_dir, kontras="standar"):
     """Baca satu foto; simpan gambar cek & potongan tulisan tangan di out_dir/<nama foto>/.
 
     Mengembalikan rekaman untuk DB. Isian akhir awal = tebakan (bulatan ragu diisi
-    pilihan paling gelap), sehingga di layar cek panitia cukup menyetujui atau mengubah."""
+    pilihan paling gelap), sehingga di layar cek panitia cukup menyetujui atau mengubah.
+    kontras: normalisasi kontras lembar pudar (kunci omr.KONTRAS); server selalu "standar"."""
     path = Path(path)
-    res = PL.process(path, keep_image=True)      # foto asli hanya untuk gambar tampilan
+    res = PL.process(path, keep_image=True, kontras=kontras)     # foto asli hanya untuk gambar tampilan
     rec = {"file": str(path), "error": res.error}
     if res.error:
         rec["baca"] = {"issues": [{"text": res.error, "key": "foto", "x": None, "y": None}]}
@@ -121,10 +123,31 @@ def process_photo(path, out_dir):
         baca={"nama": rd.nama, "nomor": rd.nomor, "kode": rd.kode, "tanggal": rd.tanggal,
               "jawaban": rd.jawaban, "jawaban_kind": kinds, "jawaban_note": notes, "jawaban_xy": xy,
               "header": header, "issues": issues, "notes": res.notes, "model": res.model,
+              "kontras": {"mode": kontras, "faktor": round(rd.kontras, 2)},
               "tebakan": {"nama": guess["nama"], "nomor": guess["nomor"], "kode": guess["kode"],
                           "tanggal": guess["tanggal"], "jawaban": jaw_guess}},
     )
     return rec
+
+
+def bw_source(gambar):
+    """Bahan tampilan hitam-putih (tampilan.bw_prepare) untuk gambar cek satu lembar, atau None.
+    Posisi bulatan & faktor kontras dari baca.npz di folder lembar; lembar lama yang dibaca tanpa
+    normalisasi memakai faktor 'standar' dari skornya, supaya lembar pudar tetap jelas dilihat."""
+    gambar = Path(gambar)
+    img = cv2.imdecode(np.fromfile(str(gambar), np.uint8), cv2.IMREAD_COLOR) if gambar.is_file() else None
+    if img is None:
+        return None
+    centers, faktor, radius, ukur = None, 1.0, 0.0, 0.0
+    npz = gambar.parent / "baca.npz"
+    if npz.is_file():
+        z = np.load(npz)
+        s = img.shape[1] / (T.CANON_W + 2 * T.PAD)          # skala gambar cek (1,5 sekarang; 0,75 versi lama)
+        centers = (z["xy"] + T.PAD) * s + np.array([0.0, OVERLAY_BAR * s])
+        radius = (T.BUBBLE_R - 1.5) * s                     # bagian dalam bulatan, garis cetaknya tidak ikut
+        ukur = T.FILL_R * s                                 # area ukur kegelapan mesin baca
+        faktor = float(z["kontras"]) if "kontras" in z.files else OM.contrast_factor(z["skor"].astype(float))
+    return TP.bw_prepare(img, faktor, centers, radius, ukur)
 
 
 # ------------------------------------------------------------ status lembar

@@ -24,12 +24,22 @@ dan merekap nilai event olimpiade. Tahap sekarang: **mesin pembaca (OMR)**.
    samar (>= 0,07, menonjol) juga ragu, karena huruf yang hilang di nama tidak memberi tanda lain.
    Pengaman pelurusan: bila garis tepi kiri tidak jatuh di barisnya (selisih > 0,4 baris),
    lembar ditandai "jawaban mungkin bergeser baris".
+   **Normalisasi kontras**: ambang di atas disetel dari foto HP biasa (isian jelas ~0,6). Foto
+   yang pudar, mis. frame video kamera dari web HP (~0,38), menekan isian dan bekas hapusan
+   dengan rasio yang sama; skor lembar seperti itu dikalikan sampai tingkat isiannya setara
+   acuan (paling besar 2x), lembar normal tidak diubah. Acuan per event di tab Scan & Nilai
+   (*Kontras baca*: mati / rendah 0,45 / **standar 0,50** / tinggi 0,55); server selalu standar.
+   Uji 128 foto: tidak ada keputusan "ok" yang berubah; isian tipis yang dulu terbaca kosong
+   atau ragu kini terbaca.
 7. **Gambar untuk dilihat** (`ljk/tampilan.py`) dipisah dari gambar untuk dibaca. Pembacaan
    bulatan & nilai tetap dari gambar lurus 2000 px seperti sebelumnya. Gambar cek (1,5x) dan
    potongan tulisan tangan (2x) dibuat langsung dari foto asli resolusi penuh lalu dipertajam
    (unsharp mask yang dijepit, tanpa halo). Di dalam setiap bulatan (jari-jari 14 px bingkai baku)
    piksel foto asli disalin persis — isian pensil, hapusan, dan isian mengilap tampil apa adanya.
    Potongan tulisan tangan (tidak memuat bulatan) diratakan kertasnya dan goresan tipis dipertegas.
+   Di Cek Manual, tombol **Hitam-putih** menampilkan gambar cek ala scanner: tinta & isian pensil
+   hitam (rata-rata per bulatan, seperti mesin baca menilai), cetakan merah abu-abu muda, tanda
+   hasil baca tetap berwarna; slider **Kontras** (standar 50) hanya mengubah tampilan, bukan hasil baca.
 6. Hal yang tidak pasti (ragu, lebih dari satu terisi, digit kosong, pelurusan meragukan)
    tidak ditebak diam-diam, tetapi dimasukkan ke daftar "perlu cek". Isian di soal setelah
    soal terakhir ujian tidak dinilai; baru diperingatkan bila ada >= 3 isian jelas dalam
@@ -65,6 +75,8 @@ sehingga aman saat aplikasi diperbarui. Documents tidak dipakai karena di laptop
    B/S/K/Nilai, dan hal yang perlu dicek. Ekspor Daftar Nilai di kanan atas.
 4. **Cek Manual**: lembar yang perlu dicek; klik catatan untuk melompat ke lokasinya di gambar,
    perbaiki data/jawaban, lalu "Simpan & tandai sudah dicek" (Ctrl+Enter) -> pindah ke lembar berikutnya.
+   Tombol **Hitam-putih** (di samping zoom) memperjelas isian tipis; kontrasnya bisa digeser.
+   Mengganti **Kontras baca** di Scan & Nilai menawarkan baca ulang lembar yang belum dicek.
 
 ## Menarik LJK dari server (LJK Reader Online)
 

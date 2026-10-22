@@ -21,24 +21,35 @@ class ImageView(QGraphicsView):
         theme.bus.changed.connect(self._themed)
         self._marker = None
         self._unit = 1.0
+        self._item = None
+        self._original = QPixmap()
 
     def _themed(self):
         self.setBackgroundBrush(QColor(theme.c("canvas")))
 
     def set_image(self, path):
         self.scene().clear()
-        self._marker = None
+        self._marker = self._item = None
         pm = QPixmap(str(path)) if path else QPixmap()
+        self._original = pm
         if pm.isNull():
             self.scene().addText("Gambar tidak tersedia").setDefaultTextColor(QColor(theme.c("muted")))
             self._unit = 1.0
         else:
-            item = self.scene().addPixmap(pm)
+            self._item = self.scene().addPixmap(pm)
             # Bawaan Qt "Fast" (tetangga terdekat) membuat gambar bergerigi/kabur saat diperkecil/diperbesar.
-            item.setTransformationMode(Qt.SmoothTransformation)
+            self._item.setTransformationMode(Qt.SmoothTransformation)
             self._unit = pm.width() / LEBAR_ACUAN
         self.setSceneRect(self.scene().itemsBoundingRect())
         self.fit()
+
+    def show_pixmap(self, pm):
+        """Ganti gambar yang tampil (ukuran sama, mis. versi hitam-putih) tanpa mengubah zoom & posisi."""
+        if self._item is not None and not pm.isNull():
+            self._item.setPixmap(pm)
+
+    def show_original(self):
+        self.show_pixmap(self._original)
 
     def fit(self):
         self.resetTransform()

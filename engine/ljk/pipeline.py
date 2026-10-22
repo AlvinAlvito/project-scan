@@ -60,9 +60,10 @@ def _center_check(read, block_index):
     return notes
 
 
-def process(path, keep_image=False):
+def process(path, keep_image=False, kontras="standar"):
     """Baca satu foto. keep_image: simpan foto asli di hasil supaya gambar cek & potongan
-    tulisan tangan bisa dibuat dari resolusi penuh (pembacaan sendiri tidak memakainya)."""
+    tulisan tangan bisa dibuat dari resolusi penuh (pembacaan sendiri tidak memakainya).
+    kontras: normalisasi kontras lembar pudar (kunci omr.KONTRAS)."""
     path = Path(path)
     res = SheetResult(path=path)
     try:
@@ -77,7 +78,7 @@ def process(path, keep_image=False):
     model = BL.active_model()
     prob = model.prob(a.canon, a.bubble_xy) if model is not None else None
     res.read = OM.read_sheet(a.canon, a.bubble_xy, AL.BLOCK_INDEX, prob,
-                             putus_ragu=model is not None and model.putus_ragu)
+                             putus_ragu=model is not None and model.putus_ragu, kontras=kontras)
     res.model = model.versi if model is not None else None
     res.notes += _center_check(res.read, AL.BLOCK_INDEX)
     if keep_image:

@@ -96,7 +96,7 @@ def save_sheet(base, aligned, read, model=None):
     extra = {"model": read.model_prob.astype(np.float32)} if getattr(read, "model_prob", None) is not None else {}
     np.savez_compressed(base / "baca.npz", xy=aligned.bubble_xy.astype(np.float32),
                         skor=np.asarray(read.scores, np.float32), kilap=np.asarray(read.shine, np.float32),
-                        pilih=pilih, ragu=ragu, **extra)
+                        pilih=pilih, ragu=ragu, kontras=np.float32(getattr(read, "kontras", 1.0)), **extra)
 
 
 def sheet_dir(row):

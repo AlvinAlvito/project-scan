@@ -143,6 +143,12 @@ QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 1p
 QCheckBox::indicator:hover { border-color: $accent; }
 QCheckBox::indicator:checked { background: $accent; border-color: $accent; image: url("$check"); }
 
+QSlider { background: transparent; min-height: 22px; }
+QSlider::groove:horizontal { height: 4px; background: $border_strong; border-radius: 2px; }
+QSlider::sub-page:horizontal { height: 4px; background: $accent; border-radius: 2px; }
+QSlider::handle:horizontal { width: 16px; height: 16px; margin: -6px 0; border-radius: 8px; background: $accent; }
+QSlider::handle:horizontal:hover { background: $accent_hover; }
+
 /* ---------- tabel & daftar */
 QTableView { background: $surface; alternate-background-color: $surface2; border: 1px solid $border;
     border-radius: 12px; gridline-color: $border; selection-background-color: $selection; selection-color: $text; }

@@ -2,18 +2,19 @@
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QScrollArea, QSplitter,
-                               QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtCore import QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
+                               QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QScrollArea, QSlider,
+                               QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from app import theme
 from app.colors import paint
 from app.imageview import ImageView
-from app.widgets import EmptyState, badge, set_badge, setup_table, toolbar
+from app.widgets import EmptyState, badge, divider, set_badge, setup_table, toolbar
 from ljk import nilai as NI
 from ljk import service as SV
+from ljk import tampilan as TP
 
 CHOICES = [("", "-"), ("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"), ("*", "ganda")]
 KIND_TONE = {"ragu": "warn", "ganda": "error"}
@@ -79,11 +80,38 @@ class ReviewTab(QWidget):
                             ("zoom-in", "Perbesar (roda mouse)", lambda: self.view.zoom(1.25)),
                             ("zoom-out", "Perkecil (roda mouse)", lambda: self.view.zoom(0.8))):
             zb.addWidget(theme.button("", ic, "icon", tip, fn))
+        zb.addWidget(divider())
+        # tampilan hitam-putih ala scanner (hanya tampilan; hasil baca tidak berubah)
+        self.btn_bw = theme.button("Hitam-putih", "contrast", tip=(
+            "Tampilan hitam-putih ala scanner: isian pensil tampak hitam pekat, cetakan merah memudar,\n"
+            "bekas hapusan tetap terang. Hanya tampilan; hasil baca tidak berubah."))
+        self.btn_bw.setCheckable(True)
+        self.bw_slider = QSlider(Qt.Horizontal)
+        self.bw_slider.setRange(0, 100)
+        self.bw_slider.setFixedWidth(150)
+        self.bw_slider.setToolTip("Kontras tampilan: makin ke kanan, goresan tipis makin hitam")
+        self.bw_label = QLabel("")
+        self.bw_label.setProperty("role", "muted")
+        self.btn_bw_std = theme.button("Standar", variant="ghost", tip="Kembalikan kontras tampilan ke standar",
+                                       slot=lambda: self.bw_slider.setValue(TP.BW_STANDAR))
+        for w in (self.btn_bw, self.bw_slider, self.bw_label, self.btn_bw_std):
+            zb.addWidget(w)
         zb.addStretch()
-        hint = QLabel("Seret untuk menggeser · roda mouse untuk zoom")
-        hint.setProperty("role", "muted")
-        zb.addWidget(hint)
+        self.zoom_hint = QLabel("Seret untuk menggeser · roda mouse untuk zoom")
+        self.zoom_hint.setProperty("role", "muted")
+        zb.addWidget(self.zoom_hint)
         lv.addLayout(zb)
+        self._bw_prep = None
+        self._bw_timer = QTimer(self)
+        self._bw_timer.setSingleShot(True)
+        self._bw_timer.setInterval(90)             # geser slider: gambar dibuat ulang setelah berhenti sejenak
+        self._bw_timer.timeout.connect(self._bw_show)
+        st = QSettings("POSI", "LJK Reader")
+        self.bw_slider.setValue(st.value("cek/kontras", TP.BW_STANDAR, type=int))
+        self.btn_bw.setChecked(st.value("cek/hitam_putih", False, type=bool))
+        self.bw_slider.valueChanged.connect(self._bw_kontras)
+        self.btn_bw.toggled.connect(self._bw_toggled)
+        self._bw_controls()
         lv.addWidget(self.view)
         split.addWidget(left)
 
@@ -276,6 +304,8 @@ class ReviewTab(QWidget):
         if lembar_id in self.ids:
             self.picker.setCurrentIndex(self.ids.index(lembar_id))
         self.view.set_image(row["gambar"])
+        self._bw_prep = None
+        self._bw_show()
         self._loading = True
         self.f_nama.setText(row["nama"])
         self.f_nomor.setText(row["nomor"])
@@ -316,8 +346,55 @@ class ReviewTab(QWidget):
         self.dirty = False
         self._update_status()
 
+    # ---- tampilan hitam-putih
+    def _bw_controls(self):
+        on = self.btn_bw.isChecked()
+        for w in (self.bw_slider, self.bw_label, self.btn_bw_std):
+            w.setVisible(on)
+        self.zoom_hint.setVisible(not on)
+        v = self.bw_slider.value()
+        text = f"{v}" + (" · standar" if v == TP.BW_STANDAR else "")
+        faktor = self._bw_prep["faktor"] if self._bw_prep else 1.0
+        if faktor > 1.01:
+            text += f" · lembar pudar dikuatkan {faktor:.1f}x"
+        self.bw_label.setText(text)
+
+    def _bw_toggled(self, on):
+        QSettings("POSI", "LJK Reader").setValue("cek/hitam_putih", on)
+        self._bw_controls()
+        self._bw_show()
+
+    def _bw_kontras(self, v):
+        QSettings("POSI", "LJK Reader").setValue("cek/kontras", v)
+        self._bw_controls()
+        self._bw_timer.start()
+
+    def _bw_show(self):
+        """Gambar cek berwarna atau hitam-putih sesuai tombol; zoom & posisi gambar tetap."""
+        if self.cur is None or not self.cur["gambar"]:
+            return
+        if not self.btn_bw.isChecked():
+            self.view.show_original()
+            return
+        if self._bw_prep is None:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                self._bw_prep = SV.bw_source(self.cur["gambar"])
+            except Exception:  # gambar / baca.npz rusak: tampilan berwarna tetap bisa dipakai
+                self._bw_prep = None
+            finally:
+                QApplication.restoreOverrideCursor()
+            self._bw_controls()
+        if self._bw_prep is None:
+            self.view.show_original()
+            return
+        out = TP.bw_render(self._bw_prep, self.bw_slider.value())
+        h, w = out.shape[:2]
+        self.view.show_pixmap(QPixmap.fromImage(QImage(out.data, w, h, out.strides[0], QImage.Format_BGR888)))
+
     def _clear(self):
         self.cur = None
+        self._bw_prep = None
         self.view.set_image(None)
         self.issues.clear()
         self.ans.setRowCount(0)

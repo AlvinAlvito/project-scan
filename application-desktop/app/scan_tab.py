@@ -4,13 +4,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QProgressBar,
-                               QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+                               QProgressBar, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from app import server_client as SC
+from app import server_link as SL
 from app import theme
 from app.colors import paint
-from app import server_link as SL
 from app.server_dialog import ServerDialog
 from app.widgets import EmptyState, StatCard, divider, setup_table, toolbar
 from ljk import service as SV
@@ -21,6 +21,10 @@ HEAD = ["#", "Sumber", "Status", "Nama", "Nomor", "Kode", "Bidang", "Lokasi", "F
         "Nilai", "Catatan"]
 COL_STATUS, COL_FOTO, COL_NILAI = 2, 8, 12
 CENTER = (0, 8, 9, 10, 11, 12)
+# Normalisasi kontras baca per event (ljk/omr.py KONTRAS): lembar pudar (mis. foto dari web HP)
+# dikuatkan supaya isian tipis tetap terbaca. Server selalu memakai "standar".
+KONTRAS_PILIHAN = [("mati", "Kontras baca: mati"), ("rendah", "Kontras baca: rendah"),
+                   ("standar", "Kontras baca: standar"), ("tinggi", "Kontras baca: tinggi")]
 
 
 class Worker(QThread):
@@ -31,9 +35,9 @@ class Worker(QThread):
     one = Signal(int, object)          # urutan, rekaman hasil baca
     progress = Signal(int, int, str)   # selesai, total, nama file
 
-    def __init__(self, items, out_dir):
+    def __init__(self, items, out_dir, kontras="standar"):
         super().__init__()
-        self.items, self.out_dir = items, out_dir
+        self.items, self.out_dir, self.kontras = items, out_dir, kontras
 
     def run(self):
         n = len(self.items)
@@ -44,7 +48,7 @@ class Worker(QThread):
             try:
                 if srv and srv.get("download") and not Path(path).exists():
                     SC.download(srv["download"], path)
-                rec = SV.process_photo(path, self.out_dir)
+                rec = SV.process_photo(path, self.out_dir, kontras=self.kontras)
             except SC.ServerError as e:
                 rec = {"file": str(path), "error": f"Gagal mengunduh dari server: {e}", "baca": {}, "unduh_gagal": True}
             except Exception as e:  # foto rusak dsb.: dicatat, proses lanjut
@@ -91,9 +95,18 @@ class ScanTab(QWidget):
         self.only_check.toggled.connect(self.refresh)
         self.btn_export = theme.button("Ekspor nilai", "download", tip="Simpan daftar nilai ke Excel",
                                        slot=self._export)
+        self.kontras = QComboBox()
+        for key, text in KONTRAS_PILIHAN:
+            self.kontras.addItem(text, key)
+        self.kontras.setToolTip(
+            "Penguatan isian tipis pada foto yang pudar (mis. foto dari web HP), berlaku untuk event ini.\n"
+            "Standar: lembar normal tidak berubah; lembar pudar dikuatkan setara foto HP biasa.\n"
+            "Tinggi: penguatan lebih kuat. Rendah: lebih hati-hati. Mati: tanpa penguatan (cara lama).")
+        self.kontras.currentIndexChanged.connect(self._kontras_changed)
         for w in (self.btn_sync, divider(), self.btn_folder, self.btn_files, divider(), self.btn_redo, self.btn_del):
             bar.addWidget(w)
         bar.addStretch()
+        bar.addWidget(self.kontras)
         bar.addWidget(self.only_check)
         bar.addWidget(self.btn_export)
         v.addLayout(bar)
@@ -147,7 +160,30 @@ class ScanTab(QWidget):
 
     def load(self, event_id):
         self.event_id = event_id
+        self.kontras.blockSignals(True)
+        self.kontras.setCurrentIndex(max(0, self.kontras.findData(self._kontras())))
+        self.kontras.blockSignals(False)
+        self.kontras.setEnabled(event_id is not None and not self.busy())
         self.refresh()
+
+    def _kontras(self):
+        ev = self.db.event(self.event_id) if self.event_id is not None else None
+        return (ev["kontras"] if ev is not None else None) or "standar"
+
+    def _kontras_changed(self, _idx):
+        new = self.kontras.currentData()
+        if self.event_id is None or new == self._kontras():
+            return
+        self.db.set_kontras(self.event_id, new)
+        rows = [r for r in self.db.lembar(self.event_id) if not r["dicek"]]
+        if not rows or self.busy():
+            return
+        label = self.kontras.currentText().split(": ")[-1]
+        if QMessageBox.question(self, "Kontras baca",
+                                f"Baca ulang {len(rows)} lembar yang belum dicek dengan kontras {label}?\n"
+                                "Lembar yang sudah dicek tidak diubah (bisa diproses ulang manual).") \
+                == QMessageBox.Yes:
+            self._reread(rows)
 
     def _out_dir(self):
         return self.data_dir / "event" / str(self.event_id)
@@ -243,7 +279,7 @@ class ScanTab(QWidget):
 
     def _run(self, items):
         self._pulled = []
-        self.worker = Worker(items, self._out_dir())
+        self.worker = Worker(items, self._out_dir(), self._kontras())
         self.worker.one.connect(self._one_done)
         self.worker.progress.connect(self._progress)
         self.worker.finished.connect(self._finished)
@@ -285,7 +321,8 @@ class ScanTab(QWidget):
             self.worker.requestInterruption()
 
     def _set_running(self, running):
-        for w in (self.btn_sync, self.btn_folder, self.btn_files, self.btn_redo, self.btn_del, self.btn_export):
+        for w in (self.btn_sync, self.btn_folder, self.btn_files, self.btn_redo, self.btn_del, self.btn_export,
+                  self.kontras):
             w.setEnabled(not running)
         self.prog_box.setVisible(running)
         if not running:
@@ -301,6 +338,10 @@ class ScanTab(QWidget):
                 self, "Proses ulang", "Sebagian lembar sudah dicek manual. Hasil cek akan hilang. Lanjutkan?"
         ) != QMessageBox.Yes:
             return
+        self._reread(rows)
+
+    def _reread(self, rows):
+        """Baca ulang lembar yang sudah ada (urutan & data server tetap)."""
         srv = [{"server_id": r["server_id"], "server": SV.server_info(r)} if r["server_id"] else None for r in rows]
         self._start([Path(r["file"]) for r in rows], urutan=[r["urutan"] for r in rows], srv=srv)
 

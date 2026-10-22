@@ -48,6 +48,19 @@ R_DALAM = 7             # jari-jari bagian dalam bulatan yang diukur kilap & mer
 T_NAMA_SAMAR = 0.07
 SELISIH_NAMA_SAMAR = 0.05
 
+# Normalisasi kontras per lembar. Ambang di atas disetel dari foto HP biasa, yang isian jelasnya
+# bertingkat kegelapan ~0,6. Foto yang pudar (mis. frame video kamera dari web HP) menekan
+# kegelapan isian DAN bekas hapusan dengan rasio yang sama, sehingga isian asli jatuh ke "ragu"
+# atau "kosong". Skor lembar yang tingkat isiannya (median isian jelas di blok jawaban) di bawah
+# acuan dikalikan supaya setara dengan foto acuan; lembar normal tidak diubah (faktor >= 1).
+# Data 128 lembar: foto HP isian median 0,59-0,64 (p10 >= 0,50); frame video web 0,33-0,42.
+# Acuan "standar" 0,50: tidak satu pun keputusan "ok" di 126 foto HP lama berubah, dan lembar web
+# OSM SULSEL 2 #26 terbaca nomor 10083 (sebelumnya 1???3). Acuan lebih tinggi = penguatan lebih kuat.
+KONTRAS = {"mati": None, "rendah": 0.45, "standar": 0.50, "tinggi": 0.55}
+KONTRAS_MAKS = 2.0          # penguatan paling besar
+KONTRAS_SELISIH = 0.08      # isian jelas: bulatan tergelap di satu soal >= ini di atas pilihan kedua
+KONTRAS_MIN_ISIAN = 5       # kurang dari ini isian jelas: tingkat isian tidak bisa diukur, faktor 1
+
 
 SHIFT = 3           # pusat ukur boleh bergeser +-3 px ke bagian paling gelap
 ANNULUS = (13, 17)  # cincin di sela bulatan untuk mengukur terang kertas setempat
@@ -273,10 +286,30 @@ def relative_scores(scores, block_index):
     return rel
 
 
-def read_sheet(canon, bubble_xy, block_index, model_prob=None, putus_ragu=False):
-    """model_prob: N x 3 peluang (kosong, terisi, hapusan) dari model aktif, atau None."""
+def fill_level(scores):
+    """Tingkat kegelapan isian jelas di blok jawaban (median), None bila isian jelas terlalu sedikit."""
+    fills = []
+    for q in range(T.N_QUESTIONS):
+        row = np.sort(scores[_GROUP_IDX[("jawaban", q)]])[::-1]
+        if row[0] - row[1] >= KONTRAS_SELISIH:
+            fills.append(row[0])
+    return float(np.median(fills)) if len(fills) >= KONTRAS_MIN_ISIAN else None
+
+
+def contrast_factor(scores, kontras="standar"):
+    """Pengali skor relatif untuk lembar pudar (lihat KONTRAS). 1.0 untuk lembar normal atau 'mati'."""
+    ref = KONTRAS.get(kontras, KONTRAS["standar"])
+    level = fill_level(scores) if ref is not None else None
+    return float(np.clip(ref / level, 1.0, KONTRAS_MAKS)) if level else 1.0
+
+
+def read_sheet(canon, bubble_xy, block_index, model_prob=None, putus_ragu=False, kontras="standar"):
+    """model_prob: N x 3 peluang (kosong, terisi, hapusan) dari model aktif, atau None.
+    kontras: kunci KONTRAS untuk normalisasi kontras lembar pudar."""
     raw, offsets = measure(canon, bubble_xy)
-    scores = relative_scores(raw, block_index)
+    rel = relative_scores(raw, block_index)
+    factor = contrast_factor(rel, kontras)
+    scores = rel * factor
     shine = measure_shine(canon, bubble_xy, block_index)
     groups = {}
     for idx, (g, i, v, _, _) in enumerate(T.BUBBLES):
@@ -336,6 +369,7 @@ def read_sheet(canon, bubble_xy, block_index, model_prob=None, putus_ragu=False)
     sr = SheetRead(nama, nomor, kode, tanggal, jawaban, header_groups, answer_groups, issues)
     sr.raw_scores = raw
     sr.scores = scores
+    sr.kontras = factor
     sr.offsets = offsets
     sr.shine = shine
     sr.model_prob = model_prob

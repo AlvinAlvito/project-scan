@@ -61,7 +61,8 @@ class DB:
                 self.con.execute("ALTER TABLE naskah ADD COLUMN sumber TEXT DEFAULT ''")
         # Kolom sinkron server (LJK Reader Online), ditambahkan ke database lama bila belum ada
         self._add_columns("event", {"server_kompetisi_id": "INTEGER", "server_url": "TEXT DEFAULT ''",
-                                    "server_bidang": "TEXT DEFAULT '[]'"})
+                                    "server_bidang": "TEXT DEFAULT '[]'",
+                                    "kontras": "TEXT DEFAULT 'standar'"})   # normalisasi kontras baca
         self._add_columns("lembar", {"server_id": "INTEGER", "server": "TEXT DEFAULT '{}'",
                                      "server_dicek": "INTEGER DEFAULT 0"})
 
@@ -87,6 +88,10 @@ class DB:
     def update_event(self, event_id, nama, tanggal):
         with self.con:
             self.con.execute("UPDATE event SET nama=?, tanggal=? WHERE id=?", (nama, tanggal, event_id))
+
+    def set_kontras(self, event_id, kontras):
+        with self.con:
+            self.con.execute("UPDATE event SET kontras=? WHERE id=?", (kontras, event_id))
 
     def link_server(self, event_id, kompetisi_id, url):
         with self.con:
