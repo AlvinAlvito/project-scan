@@ -26,7 +26,8 @@ export const LIMITS = {
   silauBagus: 0.15, silauMax: 2.0,                       // % piksel jenuh di dalam kertas
   bayanganMin: 0.55, bayanganBagus: 0.82,                // rasio sel tergelap / terterang
   geserBagus: 0.004, geserMax: 0.02,                     // perpindahan sudut antar frame / diagonal
-  luasMin: 0.40,                                         // luas 4 sudut / luas layar
+  luasMin: 0.40,                                         // luas 4 sudut / luas layar (kamera live)
+  lebarFotoMin: 700,                                     // foto: lebar antar-sudut minimal (piksel asli); mesin terbukti akurat sampai ~670
   tepi: 0.012,                                           // jarak minimum sudut ke tepi gambar
   miringMax: 15,                                         // derajat
   perspektifMax: 1.3,                                    // rasio sisi berhadapan
@@ -40,10 +41,22 @@ export function grab(source, canvas, width = ANALYSIS_WIDTH) {
   const sw = source.videoWidth || source.naturalWidth || source.width;
   const sh = source.videoHeight || source.naturalHeight || source.height;
   if (!sw || !sh) return null;
-  const w = width, h = Math.round(sh * width / sw);
+  const w = Math.min(width, sw), h = Math.round(sh * w / sw);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(source, 0, 0, w, h);
+  // foto besar (mis. 4000 px dari kamera) dikecilkan bertahap; pengecilan langsung menimbulkan aliasing
+  // yang merusak kotak sudut kecil
+  let src = source, cw = sw, ch = sh;
+  while (cw / 2 > w * 1.5) {
+    const t = document.createElement("canvas");
+    t.width = Math.round(cw / 2); t.height = Math.round(ch / 2);
+    const tc = t.getContext("2d");
+    tc.imageSmoothingQuality = "high";
+    tc.drawImage(src, 0, 0, t.width, t.height);
+    src = t; cw = t.width; ch = t.height;
+  }
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, w, h);
   return ctx.getImageData(0, 0, w, h);
 }
 
@@ -211,7 +224,7 @@ function quadArea(q) {
  * Nilai satu frame. prev: hasil frame sebelumnya (untuk kestabilan).
  * Mengembalikan { score, ready, gates, sub, metrics, corners, tip }.
  */
-export function analyze(img, prev = null) {
+export function analyze(img, prev = null, opts = {}) {
   const { data, width: w, height: h } = img;
   const n = w * h;
   const red = new Uint8Array(n), lum = new Uint8Array(n);
@@ -224,7 +237,8 @@ export function analyze(img, prev = null) {
   }
   const paperR = percentile(histR, n, 0.9);
   const cands = paperR > 35 ? findSquares(darkMask(red, w, h), w, h) : [];
-  const minArea = w * h * 0.1;
+  // foto kamera bisa berbidang pandang jauh lebih lebar dari tampilan live, jadi syarat luasnya dilonggarkan
+  const minArea = w * h * (opts.minArea ?? 0.1);
   let q = pickCorners(cands, minArea), inferred = false;
   if (!q) { q = pickThree(cands, w, h, minArea * 0.5); inferred = !!q; }
 
@@ -370,6 +384,11 @@ export function measureSharpness(source, r, mode = "live") {
   }
   const v = (s2 / m - (s1 / m) ** 2) / (rng * rng) * 1000;
   const lim = SHARP[mode] || SHARP.live;
+  if (mode === "foto") {
+    // foto: yang menentukan terbaca atau tidak adalah resolusi kertas, bukan porsi bingkai
+    r.metrics.lebar_px = Math.round(lebar);
+    r.gates.jarak = lebar >= LIMITS.lebarFotoMin;
+  }
   r.metrics.tajam = Math.round(v);
   r.metrics.tajam_mode = mode;
   r.sub.tajam = ramp(v, lim.min, lim.bagus);

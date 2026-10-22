@@ -35,22 +35,23 @@ def _to_work(img):
     return cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
 
 
-def dark_mask(img):
-    """Piksel hitam/pensil. Kanal merah dipakai supaya cetakan merah LJK hilang."""
+def dark_mask(img, thr=0.5):
+    """Piksel hitam/pensil. Kanal merah dipakai supaya cetakan merah LJK hilang.
+    thr: batas kecerahan relatif terhadap kertas di sekitarnya."""
     R = img[:, :, 2].astype(np.float32)
     bg = cv2.GaussianBlur(cv2.dilate(R, np.ones((41, 41), np.uint8)), (0, 0), 15)
-    return ((R / np.maximum(bg, 1)) < 0.5).astype(np.uint8)
+    return ((R / np.maximum(bg, 1)) < thr).astype(np.uint8)
 
 
 MAX_TILT_DEG = 45     # kemiringan kertas di dalam foto yang masih didukung
 LEFT_LIMIT = 300      # tahap awal pelurusan: bulatan dengan x < batas ini (dekat garis tepi)
 
 
-def _find_dashes(img):
+def _find_dashes(img, thr=0.5):
     """Garis kecil hitam di tepi kiri. Diukur dengan kotak yang ikut miring
     (minAreaRect), jadi tetap dikenali walau kertas difoto miring.
     Mengembalikan (titik_pusat, arah_sumbu_panjang_radian)."""
-    cnts, _ = cv2.findContours(dark_mask(img), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    cnts, _ = cv2.findContours(dark_mask(img, thr), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     H, W = img.shape[:2]
     pts, angs = [], []
     for c in cnts:
@@ -228,9 +229,23 @@ def _refine_track(u, slots, off, tset):
     return pairs, par
 
 
+# Ambang garis tepi yang dicoba berurutan. Di sebagian foto HP garis tepi tampak abu-abu tua
+# (mis. kecerahan 52% dari kertas), sehingga pada ambang 0,5 hanya serpihannya yang tertangkap.
+# Foto yang sudah terbaca pada ambang pertama tidak terpengaruh.
+DASH_THRESHOLDS = (0.5, 0.6, 0.7)
+DASH_ENOUGH = 20      # garis tepi sebanyak ini dianggap cukup; ambang berikutnya tidak dicoba
+
+
 def _detect_track(work, rng):
-    P, A = _find_dashes(work)
-    return _fit_track(P, A, rng)
+    best = None
+    for thr in DASH_THRESHOLDS:
+        P, A = _find_dashes(work, thr)
+        D = _fit_track(P, A, rng)
+        if D is not None and (best is None or len(D) > len(best)):
+            best = D
+        if best is not None and len(best) >= DASH_ENOUGH:
+            break
+    return best
 
 
 def _orient(img, rng, with_rot=False):
