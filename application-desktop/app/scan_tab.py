@@ -12,7 +12,7 @@ from app import server_link as SL
 from app import theme
 from app.colors import paint
 from app.server_dialog import ServerDialog
-from app.widgets import EmptyState, StatCard, divider, setup_table, toolbar
+from app.widgets import EmptyState, StatCard, ToolbarFit, divider, setup_table, toolbar
 from ljk import service as SV
 
 EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -111,6 +111,8 @@ class ScanTab(QWidget):
         bar.addWidget(self.only_check)
         bar.addWidget(self.btn_export)
         v.addLayout(bar)
+        ToolbarFit(self, bar, (self.btn_del, self.btn_redo, self.only_check, self.btn_export, self.btn_files,
+                               self.btn_folder, self.btn_sync))
 
         stats = toolbar(12)
         self.cards = {"total": StatCard("Lembar"), "OK": StatCard("OK", "ok"),
@@ -126,7 +128,7 @@ class ScanTab(QWidget):
         pb.setContentsMargins(16, 10, 10, 10)
         pb.setSpacing(14)
         self.progress_label = QLabel("")
-        self.progress_label.setMinimumWidth(260)
+        self.progress_label.setMinimumWidth(160)
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.btn_stop = theme.button("Hentikan", "stop", "ghost", slot=self._stop)

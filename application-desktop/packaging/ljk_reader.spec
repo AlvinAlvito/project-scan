@@ -5,11 +5,13 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
 ENGINE = ROOT.parent / "engine"          # mesin pembaca ljk/ (folder bersama dengan server)
+IKON = ROOT / "packaging" / "ljk_reader.ico"   # ganti file ini untuk mengganti ikon (lihat tools/buat_ikon.py)
 
 a = Analysis(
     [str(ROOT / "app" / "main.py")],
     pathex=[str(ROOT), str(ENGINE)],
-    datas=[(str(ENGINE / "ljk" / "ref"), "ljk/ref")],   # sidik jari blok
+    datas=[(str(ENGINE / "ljk" / "ref"), "ljk/ref"),    # sidik jari blok
+           (str(IKON), ".")],                          # ikon jendela & taskbar (app/main.py)
     hiddenimports=["app.window", "app.kunci_tab", "app.scan_tab", "app.review_tab", "app.imageview",
                    "app.theme", "app.icons", "app.widgets", "app.server_client", "app.server_dialog", "app.server_link",
                    "PySide6.QtSvg"],
@@ -24,6 +26,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="LJK Reader",
+    icon=str(IKON),
     console=False,          # aplikasi jendela, tanpa layar hitam
     upx=False,
 )

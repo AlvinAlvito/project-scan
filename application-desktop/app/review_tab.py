@@ -5,13 +5,14 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                               QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QScrollArea, QSlider,
-                               QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QScrollArea, QSizePolicy,
+                               QSlider, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget)
 
 from app import theme
 from app.colors import paint
 from app.imageview import ImageView
-from app.widgets import EmptyState, badge, divider, set_badge, setup_table, toolbar
+from app.widgets import EmptyState, ShortText, ToolbarFit, badge, divider, set_badge, setup_table, toolbar
 from ljk import nilai as NI
 from ljk import service as SV
 from ljk import tampilan as TP
@@ -23,6 +24,7 @@ HW_ORDER = [("kotak_nama", "Nama"), ("kotak_nomor", "Nomor"), ("kotak_kode", "Ko
             ("kotak_tanggal", "Tanggal"), ("bidang", "Bidang"), ("sekolah", "Sekolah"), ("kelas", "Kelas"),
             ("hp", "HP/WA")]
 HW_MAKS = (460, 56)     # ukuran tampil maksimum potongan tulisan tangan (lebar, tinggi)
+TEGAK = 860             # lebar tab di bawah ini (jendela sempit): gambar di atas, data di bawah
 
 
 class ReviewTab(QWidget):
@@ -49,7 +51,8 @@ class ReviewTab(QWidget):
         nav = toolbar()
         self.btn_prev = theme.button("", "chevron-left", "icon", "Lembar sebelumnya", lambda: self._step(-1))
         self.picker = QComboBox()
-        self.picker.setMinimumWidth(420)
+        self.picker.setMinimumWidth(200)
+        self.picker.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.picker.activated.connect(lambda i: self.show_lembar(self.ids[i]))
         self.btn_next = theme.button("", "chevron-right", "icon", "Lembar berikutnya", lambda: self._step(1))
         self.only_check = QCheckBox("Lompat ke yang perlu cek saja")
@@ -66,8 +69,9 @@ class ReviewTab(QWidget):
         nav.addWidget(self.dirty_badge)
         nav.addWidget(self.status_label)
         v.addLayout(nav)
+        ToolbarFit(self.page, nav, (ShortText(self.only_check, "Perlu cek saja"),))
 
-        split = QSplitter(Qt.Horizontal)
+        split = self.split = QSplitter(Qt.Horizontal)
         split.setChildrenCollapsible(False)
         # kiri: gambar
         left = QWidget()
@@ -92,15 +96,18 @@ class ReviewTab(QWidget):
         self.bw_slider.setToolTip("Kontras tampilan: makin ke kanan, goresan tipis makin hitam")
         self.bw_label = QLabel("")
         self.bw_label.setProperty("role", "muted")
-        self.btn_bw_std = theme.button("Standar", variant="ghost", tip="Kembalikan kontras tampilan ke standar",
-                                       slot=lambda: self.bw_slider.setValue(TP.BW_STANDAR))
+        self.btn_bw_std = theme.button("Standar", "undo", "ghost", "Kembalikan kontras tampilan ke standar",
+                                       lambda: self.bw_slider.setValue(TP.BW_STANDAR))
         for w in (self.btn_bw, self.bw_slider, self.bw_label, self.btn_bw_std):
             zb.addWidget(w)
         zb.addStretch()
         self.zoom_hint = QLabel("Seret untuk menggeser · roda mouse untuk zoom")
         self.zoom_hint.setProperty("role", "muted")
+        self.zoom_hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.zoom_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)    # sempit: terpotong, tidak memaksa lebar
         zb.addWidget(self.zoom_hint)
         lv.addLayout(zb)
+        self._zb_fit = ToolbarFit(left, zb, (self.btn_bw_std, self.btn_bw))
         self._bw_prep = None
         self._bw_timer = QTimer(self)
         self._bw_timer.setSingleShot(True)
@@ -346,6 +353,14 @@ class ReviewTab(QWidget):
         self.dirty = False
         self._update_status()
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        tegak = self.width() < TEGAK
+        if tegak != (self.split.orientation() == Qt.Vertical):
+            self.split.setOrientation(Qt.Vertical if tegak else Qt.Horizontal)
+            total = self.split.height() if tegak else self.split.width()
+            self.split.setSizes([int(total * 0.55), int(total * 0.45)] if tegak else [760, 640])
+
     # ---- tampilan hitam-putih
     def _bw_controls(self):
         on = self.btn_bw.isChecked()
@@ -356,8 +371,11 @@ class ReviewTab(QWidget):
         text = f"{v}" + (" · standar" if v == TP.BW_STANDAR else "")
         faktor = self._bw_prep["faktor"] if self._bw_prep else 1.0
         if faktor > 1.01:
-            text += f" · lembar pudar dikuatkan {faktor:.1f}x"
+            text += f" · ×{faktor:.1f}"
         self.bw_label.setText(text)
+        self.bw_label.setToolTip(f"Lembar pudar: kegelapan dikuatkan {faktor:.1f}x, sama seperti saat dibaca"
+                                 if faktor > 1.01 else "")
+        self._zb_fit.fit()                         # slider muncul/hilang: lebar toolbar berubah
 
     def _bw_toggled(self, on):
         QSettings("POSI", "LJK Reader").setValue("cek/hitam_putih", on)

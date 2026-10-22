@@ -1,11 +1,11 @@
 """Jendela utama: daftar event di sidebar kiri, tab Kunci / Scan & Nilai / Cek Manual / Latih di kanan."""
 import shutil
 
-from PySide6.QtCore import QRectF, QSize, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPainterPath
-from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QMainWindow, QMessageBox, QStackedWidget, QStyle, QStyledItemDelegate, QTabWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QMainWindow, QMessageBox, QStackedWidget, QStyle, QStyledItemDelegate,
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from app import icons, server_client as SC, server_link as SL, theme
 from app.kunci_tab import KunciTab
@@ -15,8 +15,12 @@ from app.scan_tab import ScanTab
 from app.server_dialog import ServerDialog
 from app.widgets import EmptyState
 
-TABS = (("key", "Kunci Jawaban"), ("scan", "Scan && Nilai"), ("clipboard-check", "Cek Manual"),
-        ("cpu", "Latih Model"))
+TABS = (("key", "Kunci Jawaban", "Kunci"), ("scan", "Scan && Nilai", "Scan"),
+        ("clipboard-check", "Cek Manual", "Cek"), ("cpu", "Latih Model", "Latih"))     # ikon, nama, nama pendek
+SIDEBAR_W = 264
+# Jendela lebih sempit dari ini (mis. setengah layar laptop): sidebar disembunyikan dan dibuka sebagai panel
+# melayang lewat tombol di kiri judul, nama tab dipendekkan; toolbar tiap tab menyesuaikan sendiri.
+SEMPIT = 1000
 
 
 class KompetisiLoader(QThread):
@@ -110,13 +114,13 @@ class MainWindow(QMainWindow):
         self.event_id = None
         self.setWindowTitle("LJK Reader")
         self.resize(1440, 880)
-        self.setMinimumSize(1100, 680)
+        self.setMinimumSize(640, 560)
 
         # ---- sidebar
-        side = QWidget()
+        side = self.side = QWidget()
         side.setObjectName("sidebar")
         side.setAttribute(Qt.WA_StyledBackground, True)
-        side.setFixedWidth(264)
+        side.setFixedWidth(SIDEBAR_W)
         sv = QVBoxLayout(side)
         sv.setContentsMargins(16, 20, 16, 16)
         sv.setSpacing(8)
@@ -161,6 +165,7 @@ class MainWindow(QMainWindow):
         self.events.setMouseTracking(True)
         self.events.setVerticalScrollMode(QListWidget.ScrollPerPixel)
         self.events.currentItemChanged.connect(self._event_selected)
+        self.events.itemClicked.connect(lambda _it: self._close_side())
         sv.addWidget(self.events, 1)
         new = theme.button("Event Baru", "plus", "primary", slot=self._new_event)
         sv.addWidget(new)
@@ -192,9 +197,15 @@ class MainWindow(QMainWindow):
         self.title.setProperty("role", "title")
         self.subtitle = QLabel("")
         self.subtitle.setProperty("role", "subtitle")
+        for lbl in (self.title, self.subtitle):
+            lbl.setWordWrap(True)                       # jendela sempit: turun baris, tidak memaksa lebar
         head.addWidget(self.title)
         head.addWidget(self.subtitle)
         head_row = QHBoxLayout()
+        head_row.setSpacing(12)
+        self.btn_side = theme.button("", "panel-left", "icon", "Tampilkan daftar event", self._open_side)
+        self.btn_side.setVisible(False)
+        head_row.addWidget(self.btn_side, 0, Qt.AlignTop)
         head_row.addLayout(head, 1)
         cv.addLayout(head_row)
         cv.addSpacing(8)
@@ -207,7 +218,7 @@ class MainWindow(QMainWindow):
         self.review = ReviewTab(db)
         self.latih = LatihTab(db, data_dir)
         head_row.addWidget(self.scan.kontras, 0, Qt.AlignBottom)     # pengaturan per event, sejajar judul
-        for w, (_ic, text) in zip((self.kunci, self.scan, self.review, self.latih), TABS):
+        for w, (_ic, text, _pendek) in zip((self.kunci, self.scan, self.review, self.latih), TABS):
             self.tabs.addTab(w, text)
         self.tabs.currentChanged.connect(self._tab_changed)
         self.kunci.changed.connect(self.scan.refresh)
@@ -223,8 +234,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.tabs)
         cv.addWidget(self.stack, 1)
 
-        root = QWidget()
-        h = QHBoxLayout(root)
+        root = self._root = QWidget()
+        h = self._root_layout = QHBoxLayout(root)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(0)
         h.addWidget(side)
@@ -234,6 +245,7 @@ class MainWindow(QMainWindow):
         theme.bus.changed.connect(self._theme_changed)
         self._theme_changed()
         self._loader = None
+        self._sempit = False
         self._load_events()
         self._sync_server_events()
 
@@ -243,13 +255,32 @@ class MainWindow(QMainWindow):
         self.btn_theme.setText("Tema terang" if dark else "Tema gelap")
         self._update_server_button()
         dpr = self.devicePixelRatioF() or 2.0
-        self.logo.setPixmap(icons.pixmap("scan", theme.c("on_accent"), 22, dpr))
-        self.logo.setStyleSheet(f"background: {theme.c('accent')}; border-radius: 10px;")
+        logo = self._logo_pixmap(dpr)
+        if logo is not None:
+            self.logo.setPixmap(logo)
+            self.logo.setStyleSheet("")
+        else:                                           # tanpa ikon aplikasi: logo bawaan
+            self.logo.setPixmap(icons.pixmap("scan", theme.c("on_accent"), 22, dpr))
+            self.logo.setStyleSheet(f"background: {theme.c('accent')}; border-radius: 10px;")
         self._side_line.setStyleSheet(f"background: {theme.c('side_hover')}")
-        for i, (ic, _t) in enumerate(TABS):
+        for i, (ic, _t, _p) in enumerate(TABS):
             self.tabs.setTabIcon(i, icons.icon(ic, theme.c("icon"), theme.c("faint")))
         self.events.viewport().update()
         theme.refresh_all()
+
+    def _logo_pixmap(self, dpr):
+        """Logo sidebar = ikon aplikasi (packaging/ljk_reader.ico, lihat tools/buat_ikon.py), jadi ikut berganti
+        bila ikon diganti. Dipakai gambar ukuran kecil terbesar di ikon (<= 64 px: versi potongan untuk ukuran
+        kecil, mis. wajah), bukan gambar utuh 128/256 px yang terlalu ramai untuk 38 px. None bila tidak ada ikon."""
+        ikon = QApplication.windowIcon()
+        kecil = [s for s in ikon.availableSizes() if s.width() <= 64]
+        if not kecil:
+            return None
+        n = max(s.width() for s in kecil)
+        px = round(self.logo.width() * dpr)
+        pm = ikon.pixmap(QSize(n, n), 1.0).scaled(px, px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        pm.setDevicePixelRatio(dpr)
+        return pm
 
     # ---- event
     @staticmethod
@@ -415,6 +446,47 @@ class MainWindow(QMainWindow):
     def _open_review(self, lembar_id):
         self.tabs.setCurrentWidget(self.review)
         self.review.show_lembar(lembar_id)
+
+    # ---- jendela sempit (mis. setengah layar)
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._apply_width()
+
+    def _apply_width(self):
+        sempit = self.width() < SEMPIT
+        if sempit != self._sempit:
+            self._sempit = sempit
+            QApplication.instance().removeEventFilter(self)
+            if sempit:                                  # sidebar keluar dari susunan, jadi panel melayang
+                self._root_layout.removeWidget(self.side)
+                self.side.hide()
+            else:
+                self._root_layout.insertWidget(0, self.side)
+                self.side.show()
+            self.btn_side.setVisible(sempit)
+            for i, (_ic, text, pendek) in enumerate(TABS):
+                self.tabs.setTabText(i, pendek if sempit else text)
+        if sempit and self.side.isVisible():
+            self.side.setGeometry(0, 0, SIDEBAR_W, self._root.height())
+
+    def _open_side(self):
+        """Panel daftar event melayang di atas isi (jendela sempit); tertutup saat event diklik atau klik di luar."""
+        self.side.setGeometry(0, 0, SIDEBAR_W, self._root.height())
+        self.side.raise_()
+        self.side.show()
+        QApplication.instance().installEventFilter(self)
+
+    def _close_side(self):
+        if self._sempit:
+            self.side.hide()
+            QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.MouseButtonPress and self._sempit and self.side.isVisible():
+            p = self.side.mapFromGlobal(ev.globalPosition().toPoint())
+            if not self.side.rect().contains(p):
+                self._close_side()
+        return False
 
     def closeEvent(self, e):
         if self.scan.busy():

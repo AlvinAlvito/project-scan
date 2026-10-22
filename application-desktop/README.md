@@ -66,6 +66,9 @@ Data aplikasi (database `ljk.db`, gambar cek, potongan tulisan tangan) disimpan 
 **`%LOCALAPPDATA%\LJK Reader`** (tombol "Buka folder data" di aplikasi), di luar folder program
 sehingga aman saat aplikasi diperbarui. Documents tidak dipakai karena di laptop ini diblokir
 "Controlled folder access" Windows. Data versi lama (folder `data/`) otomatis disalin saat pertama dibuka.
+Jendela bisa diperkecil sampai 640 px (mis. setengah layar dengan Win + panah). Di bawah 1000 px daftar event
+dibuka lewat tombol panel di kiri judul, tombol toolbar menjadi ikon (namanya di tooltip), dan Cek Manual
+menampilkan gambar di atas dan data di bawah.
 
 1. **Event** (panel kiri): Baru -> isi nama event & tanggal.
 2. **Kunci Jawaban**: Impor dari PDF pembahasan / Impor dari Excel -> isi Kode Naskah &
@@ -143,7 +146,13 @@ dan `baca.npz` (posisi, skor, keputusan aturan tiap bulatan) di folder lembar.
 
 Paket siap pakai ada di `dist\LJK Reader\` (buka `LJK Reader.exe`). Untuk laptop lain, salin
 **seluruh folder** `LJK Reader`. Setelah kode diperbarui, klik dua kali `Buat EXE.bat` untuk
-membuat ulang paketnya (data di %LOCALAPPDATA% tidak tersentuh).
+membuat ulang paketnya (data di %LOCALAPPDATA% tidak tersentuh). Tutup aplikasinya dulu: file yang
+sedang dipakai tidak bisa diganti dan paketnya bisa rusak setengah jadi.
+
+Ikon aplikasi (file .exe, jendela, taskbar) adalah `packaging\ljk_reader.ico`. Untuk menggantinya dari
+gambar: `.venv\Scripts\python tools\buat_ikon.py GAMBAR.jpg` (opsional `--kecil X Y SISI`: potongan
+persegi untuk ukuran kecil, mis. wajah), lalu `Buat EXE.bat`. Windows kadang masih menampilkan ikon lama
+dari cache-nya sebentar.
 
 Cek cepat hasil paket (tanpa membuka jendela):
 `"LJK Reader.exe" --selftest FOTO.jpg KUNCI.pdf hasil.txt`

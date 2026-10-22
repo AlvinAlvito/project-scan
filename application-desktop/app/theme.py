@@ -316,10 +316,31 @@ def set_icon(w, name_, tone_=None):
 
 
 class Button(QPushButton):
-    """QPushButton dengan jarak ikon-teks yang lebih lega."""
+    """QPushButton dengan jarak ikon-teks yang lebih lega. Bisa diringkas jadi ikon saja (set_compact)
+    saat toolbar sempit; teksnya lalu tampil di tooltip."""
+
+    _label = ""
+    _compact = False
+    _tip = None
 
     def setText(self, text):
+        self._label = text
+        if self._compact:
+            text = ""
         super().setText(f"  {text}" if text and self.property("icon_name") else text)
+
+    def set_compact(self, on):
+        on = bool(on and self.property("icon_name") and self._label)
+        if on == self._compact:
+            return
+        if on:
+            self._tip = self.toolTip()
+            label = self._label.replace("&&", "&")
+            self.setToolTip(f"{label}\n{self._tip}" if self._tip and self._tip != label else label)
+        else:
+            self.setToolTip(self._tip or "")
+        self._compact = on
+        self.setText(self._label)
 
 
 def button(text, icon_name=None, variant=None, tip=None, slot=None):

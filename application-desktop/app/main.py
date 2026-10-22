@@ -11,12 +11,18 @@ for p in (ENGINE, ROOT):
         sys.path.insert(0, str(p))
 
 from PySide6.QtCore import QStandardPaths, QTimer  # noqa: E402
+from PySide6.QtGui import QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from app import theme  # noqa: E402
 from app.window import MainWindow  # noqa: E402
 from ljk import belajar as BL  # noqa: E402
 from ljk.db import DB  # noqa: E402
+
+
+def icon_path():
+    """Ikon aplikasi: di samping isi paket .exe (_internal), atau packaging/ saat dijalankan dari repository."""
+    return Path(getattr(sys, "_MEIPASS", ROOT / "packaging")) / "ljk_reader.ico"
 
 
 def data_dir():
@@ -81,9 +87,14 @@ def main():
     if len(sys.argv) == 5 and sys.argv[1] == "--selftest":
         selftest(*sys.argv[2:])
         return
+    if sys.platform == "win32":
+        # taskbar memakai ikon aplikasi ini, bukan ikon Python (saat dijalankan dari repository)
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("POSI.LJKReader")
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("LJK Reader")
+    app.setWindowIcon(QIcon(str(icon_path())))
     theme.apply(save=False)
     d = data_dir()
     d.mkdir(parents=True, exist_ok=True)

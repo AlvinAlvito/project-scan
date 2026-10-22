@@ -10,7 +10,7 @@ from ljk import kunci as KU
 from app import theme
 from app.colors import paint
 from app.kunci_dialog import KunciDialog
-from app.widgets import EmptyState, badge, divider, setup_table, toolbar
+from app.widgets import EmptyState, ToolbarFit, badge, divider, setup_table, toolbar
 from ljk import nilai as NI
 
 COL_KODE, COL_BIDANG, COL_JUMLAH, COL_KUNCI, COL_CATATAN = range(5)
@@ -29,14 +29,14 @@ class KunciTab(QWidget):
         v.setContentsMargins(0, 18, 0, 0)
         v.setSpacing(14)
         bar = toolbar()
-        for w in (theme.button("Impor PDF", "file-text", tip="Baca kunci dari folder PDF pembahasan soal",
-                               slot=self._import_pdf),
-                  theme.button("Impor Excel", "sheet", tip="Muat kunci dari file Excel", slot=self._import_excel),
-                  divider(),
-                  theme.button("Tambah bidang", "plus", tip="Tambah kode naskah baru", slot=self._add_row),
-                  theme.button("Edit kunci", "grid", tip="Edit kunci per nomor soal untuk baris yang dipilih",
-                               slot=self._edit_current),
-                  theme.button("Hapus", "trash", "danger", "Hapus baris yang dipilih", self._del_rows)):
+        b_pdf = theme.button("Impor PDF", "file-text", tip="Baca kunci dari folder PDF pembahasan soal",
+                             slot=self._import_pdf)
+        b_xls = theme.button("Impor Excel", "sheet", tip="Muat kunci dari file Excel", slot=self._import_excel)
+        b_add = theme.button("Tambah bidang", "plus", tip="Tambah kode naskah baru", slot=self._add_row)
+        b_edit = theme.button("Edit kunci", "grid", tip="Edit kunci per nomor soal untuk baris yang dipilih",
+                              slot=self._edit_current)
+        b_del = theme.button("Hapus", "trash", "danger", "Hapus baris yang dipilih", self._del_rows)
+        for w in (b_pdf, b_xls, divider(), b_add, b_edit, b_del):
             bar.addWidget(w)
         bar.addStretch()
         self.state = badge("Belum disimpan", "warn")
@@ -45,6 +45,7 @@ class KunciTab(QWidget):
         self.save_btn = theme.button("Simpan kunci", "save", "primary", slot=self.save)
         bar.addWidget(self.save_btn)
         v.addLayout(bar)
+        ToolbarFit(self, bar, (b_del, b_edit, b_add, b_xls, b_pdf, self.save_btn))
 
         # bidang yang terdaftar di server tetapi belum punya kunci di laptop ini
         self.srv_box = QFrame()
@@ -117,7 +118,7 @@ class KunciTab(QWidget):
             return
         daftar = ", ".join(f"<b>{b['nama']}</b> ({b['kode_naskah']} · {b['jumlah_soal']} soal)" for b in missing)
         self.srv_text.setText(f"Bidang dari server yang belum ada kuncinya: {daftar}")
-        for b in missing[:5]:
+        for b in missing[:3]:           # sisanya muncul setelah yang ini diisi (tetap tertulis di teks)
             btn = theme.button(f"Isi kunci {b['kode_naskah']}", "key", "primary" if b is missing[0] else None,
                                f"Isi kunci {b['nama']}", lambda _=False, b=b: self.add_from_server(b))
             self.srv_buttons.addWidget(btn)

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLab
                                QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from app import theme
-from app.widgets import EmptyState, divider, toolbar
+from app.widgets import EmptyState, ToolbarFit, divider, toolbar
 from ljk import belajar as BL
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +122,7 @@ class LatihTab(QWidget):
             top.addWidget(w)
         top.addStretch()
         v.addLayout(top)
+        ToolbarFit(self, top, (self.btn_report, self.btn_train, self.btn_load))
         self.stats = QLabel("")
         self.stats.setWordWrap(True)
         self.stats.setProperty("role", "muted")
