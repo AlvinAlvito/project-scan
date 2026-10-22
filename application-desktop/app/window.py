@@ -194,7 +194,9 @@ class MainWindow(QMainWindow):
         self.subtitle.setProperty("role", "subtitle")
         head.addWidget(self.title)
         head.addWidget(self.subtitle)
-        cv.addLayout(head)
+        head_row = QHBoxLayout()
+        head_row.addLayout(head, 1)
+        cv.addLayout(head_row)
         cv.addSpacing(8)
 
         self.tabs = QTabWidget()
@@ -204,6 +206,7 @@ class MainWindow(QMainWindow):
         self.scan = ScanTab(db, data_dir)
         self.review = ReviewTab(db)
         self.latih = LatihTab(db, data_dir)
+        head_row.addWidget(self.scan.kontras, 0, Qt.AlignBottom)     # pengaturan per event, sejajar judul
         for w, (_ic, text) in zip((self.kunci, self.scan, self.review, self.latih), TABS):
             self.tabs.addTab(w, text)
         self.tabs.currentChanged.connect(self._tab_changed)
@@ -280,6 +283,7 @@ class MainWindow(QMainWindow):
         has = event_id is not None
         self.stack.setCurrentWidget(self.tabs if has else self.empty)
         self.btn_push.setEnabled(has)
+        self.scan.kontras.setVisible(has)
         self.btn_edit.setEnabled(has)
         self.btn_delete.setEnabled(has)
         self._update_header()

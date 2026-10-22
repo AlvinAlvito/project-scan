@@ -95,9 +95,11 @@ class ScanTab(QWidget):
         self.only_check.toggled.connect(self.refresh)
         self.btn_export = theme.button("Ekspor nilai", "download", tip="Simpan daftar nilai ke Excel",
                                        slot=self._export)
+        # pengaturan per event: ditempatkan jendela utama di kepala halaman (toolbar ini sudah penuh)
         self.kontras = QComboBox()
         for key, text in KONTRAS_PILIHAN:
             self.kontras.addItem(text, key)
+        self.kontras.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.kontras.setToolTip(
             "Penguatan isian tipis pada foto yang pudar (mis. foto dari web HP), berlaku untuk event ini.\n"
             "Standar: lembar normal tidak berubah; lembar pudar dikuatkan setara foto HP biasa.\n"
@@ -106,7 +108,6 @@ class ScanTab(QWidget):
         for w in (self.btn_sync, divider(), self.btn_folder, self.btn_files, divider(), self.btn_redo, self.btn_del):
             bar.addWidget(w)
         bar.addStretch()
-        bar.addWidget(self.kontras)
         bar.addWidget(self.only_check)
         bar.addWidget(self.btn_export)
         v.addLayout(bar)
@@ -381,18 +382,25 @@ class ScanTab(QWidget):
             if done:
                 SC.mark_checked(done)
                 self.db.mark_server_dicek(self.event_id, done)
-            res = SC.pending(kid)
+            # semua=True: termasuk lembar yang pernah ditarik, supaya lembar yang terhapus di sini bisa ditarik ulang
+            res = SC.pending(kid, semua=True)
         except SC.ServerError as e:
             QMessageBox.warning(self, "Sinkron server", str(e))
             return
         have = self.db.server_ids(self.event_id)
-        again = [i["id"] for i in res["items"] if i["id"] in have]
+        again = [i["id"] for i in res["items"] if i["id"] in have and not i.get("ditarik_at")]
         if again:                       # sudah ada di sini, tapi status 'ditarik' belum tercatat di server
             try:
                 SC.mark_pulled(again)
             except SC.ServerError:
                 pass
-        new = [i for i in res["items"] if i["id"] not in have]
+        new = [i for i in res["items"] if i["id"] not in have and not i.get("ditarik_at")]
+        gone = [i for i in res["items"] if i["id"] not in have and i.get("ditarik_at")]
+        if gone and QMessageBox.question(
+                self, "Sinkron server",
+                f"{len(gone)} lembar dari server pernah ditarik tetapi tidak ada lagi di event ini "
+                "(mungkin terhapus).\nTarik ulang lembar itu?") == QMessageBox.Yes:
+            new = sorted(new + gone, key=lambda i: i["id"])
         if not new:
             wait = res.get("menunggu_konfirmasi", 0)
             QMessageBox.information(self, "Sinkron server", "Tidak ada lembar baru dari server." +

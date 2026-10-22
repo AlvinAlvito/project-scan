@@ -27,8 +27,8 @@ dan merekap nilai event olimpiade. Tahap sekarang: **mesin pembaca (OMR)**.
    **Normalisasi kontras**: ambang di atas disetel dari foto HP biasa (isian jelas ~0,6). Foto
    yang pudar, mis. frame video kamera dari web HP (~0,38), menekan isian dan bekas hapusan
    dengan rasio yang sama; skor lembar seperti itu dikalikan sampai tingkat isiannya setara
-   acuan (paling besar 2x), lembar normal tidak diubah. Acuan per event di tab Scan & Nilai
-   (*Kontras baca*: mati / rendah 0,45 / **standar 0,50** / tinggi 0,55); server selalu standar.
+   acuan (paling besar 2x), lembar normal tidak diubah. Acuan per event di kanan atas, sejajar nama
+   event (*Kontras baca*: mati / rendah 0,45 / **standar 0,50** / tinggi 0,55); server selalu standar.
    Uji 128 foto: tidak ada keputusan "ok" yang berubah; isian tipis yang dulu terbaca kosong
    atau ragu kini terbaca.
 7. **Gambar untuk dilihat** (`ljk/tampilan.py`) dipisah dari gambar untuk dibaca. Pembacaan
@@ -76,7 +76,7 @@ sehingga aman saat aplikasi diperbarui. Documents tidak dipakai karena di laptop
 4. **Cek Manual**: lembar yang perlu dicek; klik catatan untuk melompat ke lokasinya di gambar,
    perbaiki data/jawaban, lalu "Simpan & tandai sudah dicek" (Ctrl+Enter) -> pindah ke lembar berikutnya.
    Tombol **Hitam-putih** (di samping zoom) memperjelas isian tipis; kontrasnya bisa digeser.
-   Mengganti **Kontras baca** di Scan & Nilai menawarkan baca ulang lembar yang belum dicek.
+   Mengganti **Kontras baca** (kanan atas) menawarkan baca ulang lembar yang belum dicek.
 
 ## Menarik LJK dari server (LJK Reader Online)
 
@@ -93,6 +93,8 @@ ditarik ke event desktop:
    peserta baru, kualitas foto < 85%) masuk ke daftar perlu cek. Kolom **Lokasi** dan **Foto**
    (skor kualitas dari HP) tampil di tabel.
 4. Lembar yang sudah dicek dilaporkan ke server pada sinkron berikutnya (terlihat di panel admin).
+5. Lembar server yang pernah ditarik tetapi tidak ada lagi di event (mis. terhapus) ditawarkan untuk
+   ditarik ulang saat sinkron; bila ditolak, lembar itu tidak muncul lagi sampai diminta.
 
 Kunci jawaban tetap hanya di desktop; isi seperti biasa di tab Kunci Jawaban dengan kode naskah
 yang sama dengan bidang di server.
