@@ -483,6 +483,8 @@ class LatihTab(QWidget):
         self.log.setVisible(True)
         self.btn_train.setEnabled(False)
         self.btn_train.setText("Melatih…")
+        m = BL.active_model()
+        self._versi_lama = m.versi if m is not None else None     # untuk pesan penutup: model berganti atau tidak
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.readyReadStandardOutput.connect(
@@ -493,10 +495,18 @@ class LatihTab(QWidget):
     def _trained(self, *_):
         self.btn_train.setEnabled(True)
         self.btn_train.setText("Latih ulang")
-        BL.active_model()
+        m = BL.active_model()                   # dimuat ulang bila aktif.json berubah (model baru lulus)
         self.update_stats()
-        self.log.appendPlainText("\nModel baru dipakai untuk foto yang diproses sesudah ini. "
-                                 "Lembar lama perlu 'Proses ulang' agar ikut dinilai model.")
+        versi = m.versi if m is not None else None
+        if versi is not None and versi != self._versi_lama:
+            pesan = (f"Model baru {versi} aktif dan dipakai untuk foto yang diproses sesudah ini. "
+                     "Lembar lama perlu 'Proses ulang' agar ikut dinilai model.")
+        elif versi is not None:
+            pesan = (f"Model baru tidak diaktifkan. Model aktif sebelumnya ({versi}) tetap dipakai; "
+                     "tidak ada yang berubah.")
+        else:
+            pesan = "Model tidak diaktifkan. Pembacaan tetap memakai aturan saja; tidak ada yang perlu diproses ulang."
+        self.log.appendPlainText("\n" + pesan)
 
     def report(self):
         f = self.data_dir / "model" / "aktif.json"
