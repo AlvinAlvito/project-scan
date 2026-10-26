@@ -11,6 +11,7 @@ a = Analysis(
     [str(ROOT / "app" / "main.py")],
     pathex=[str(ROOT), str(ENGINE)],
     datas=[(str(ENGINE / "ljk" / "ref"), "ljk/ref"),    # sidik jari blok
+           (str(ROOT / "app" / "fonts"), "app/fonts"),  # huruf IBM Plex (app/theme.py FONTS)
            (str(IKON), ".")],                          # ikon jendela & taskbar (app/main.py)
     hiddenimports=["app.window", "app.kunci_tab", "app.scan_tab", "app.review_tab", "app.imageview",
                    "app.theme", "app.icons", "app.widgets", "app.server_client", "app.server_dialog", "app.server_link",

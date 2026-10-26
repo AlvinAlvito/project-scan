@@ -37,7 +37,7 @@ dan merekap nilai event olimpiade. Tahap sekarang: **mesin pembaca (OMR)**.
    (unsharp mask yang dijepit, tanpa halo). Di dalam setiap bulatan (jari-jari 14 px bingkai baku)
    piksel foto asli disalin persis — isian pensil, hapusan, dan isian mengilap tampil apa adanya.
    Potongan tulisan tangan (tidak memuat bulatan) diratakan kertasnya dan goresan tipis dipertegas.
-   Di Cek Manual, tombol **Hitam-putih** menampilkan gambar cek ala scanner: tinta & isian pensil
+   Di panel cek, tombol **Hitam-putih** menampilkan gambar cek ala scanner: tinta & isian pensil
    hitam (rata-rata per bulatan, seperti mesin baca menilai), cetakan merah abu-abu muda, tanda
    hasil baca tetap berwarna; slider **Kontras** (standar 50) hanya mengubah tampilan, bukan hasil baca.
 6. Hal yang tidak pasti (ragu, lebih dari satu terisi, digit kosong, pelurusan meragukan)
@@ -66,35 +66,45 @@ Data aplikasi (database `ljk.db`, gambar cek, potongan tulisan tangan) disimpan 
 **`%LOCALAPPDATA%\LJK Reader`** (tombol "Buka folder data" di aplikasi), di luar folder program
 sehingga aman saat aplikasi diperbarui. Documents tidak dipakai karena di laptop ini diblokir
 "Controlled folder access" Windows. Data versi lama (folder `data/`) otomatis disalin saat pertama dibuka.
+Tampilan bergaya "lembar di dalam bingkai": bilah atas (cari lembar dengan Ctrl+K, status server, **Sinkron**)
+dan daftar event di kiri berwarna abu-abu muda; isi halaman di lembar putih. Huruf IBM Plex Sans/Mono ikut
+dalam paket (`app/fonts`, lisensi OFL). Tema terang/gelap di kiri bawah.
 Jendela bisa diperkecil sampai 640 px (mis. setengah layar dengan Win + panah). Di bawah 1000 px daftar event
-dibuka lewat tombol panel di kiri judul, tombol toolbar menjadi ikon (namanya di tooltip), dan Cek Manual
-menampilkan gambar di atas dan data di bawah.
+dibuka lewat tombol panel di kiri judul dan tombol di kepala halaman menjadi ikon (namanya di tooltip); bila
+tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampilkan gambar di atas data.
 
-1. **Event** (panel kiri): Baru -> isi nama event & tanggal.
+1. **Event** (panel kiri): **+** -> isi nama event & tanggal. Menu **⋯** di samping judul "Event" berisi
+   ambil kompetisi dari server, kirim event ke server, ubah, dan hapus event.
 2. **Kunci Jawaban**: Impor dari PDF pembahasan / Impor dari Excel -> isi Kode Naskah &
    Nama Bidang -> Simpan kunci. Klik dua kali kolom Kunci (atau "Edit kunci per nomor...")
    untuk memperbaiki kunci per nomor soal (tampilan blok 30 nomor seperti LJK, tombol Buka PDF sumber).
-3. **Scan & Nilai**: Tambah foto dari folder -> diproses otomatis; tabel menampilkan status,
-   B/S/K/Nilai, dan hal yang perlu dicek. Ekspor Daftar Nilai di kanan atas.
-4. **Cek Manual**: lembar yang perlu dicek; klik catatan untuk melompat ke lokasinya di gambar,
-   perbaiki data/jawaban, lalu "Simpan & tandai sudah dicek" (Ctrl+Enter) -> pindah ke lembar berikutnya.
-   Tombol **Hitam-putih** (di samping zoom) memperjelas isian tipis; kontrasnya bisa digeser.
-   Mengganti **Kontras baca** (kanan atas) menawarkan baca ulang lembar yang belum dicek.
+3. **Scan & nilai** (cek manual ada di sini juga): **Tambah foto** (kanan atas; pilih foto atau satu
+   folder) -> diproses otomatis. Kartu **Semua / Perlu cek / Gagal / Sudah dicek / OK** menghitung lembar
+   sekaligus menyaring antrean di kiri (nama, nilai, catatan pertama; urut nomor, nilai, atau kode naskah).
+   Kalimat di bawah nama event menyebut berapa lembar siap diekspor dan apa yang masih menahan.
+   Pilih lembar di antrean -> gambar cek & data tampil di kanan. Soal yang ragu/ganda muncul di kotak
+   **Soal N** dengan tombol A-E / Kosong / Ganda (atau tekan A-E di papan ketik); klik catatan untuk
+   melompat ke lokasinya di gambar; data peserta, tulisan tangan, dan tabel semua jawaban ada di bawahnya.
+   "Simpan dan tandai sudah dicek" (Ctrl+Enter) -> pindah ke lembar berikutnya di antrean
+   (Ctrl+atas/bawah atau tombol ‹ › untuk berpindah tanpa menyimpan). Menu **⋯** antrean (atau klik kanan):
+   proses ulang / hapus lembar terpilih. Tombol **Hitam-putih** (di samping zoom) memperjelas isian tipis;
+   kontrasnya bisa digeser. Mengganti **Kontras baca** (kanan atas) menawarkan baca ulang lembar yang belum
+   dicek. **Ekspor nilai** di kanan atas.
 
 ## Menarik LJK dari server (LJK Reader Online)
 
 LJK yang dipotret admin daerah lewat web HP (lihat [`../server/README.md`](../server/README.md))
 ditarik ke event desktop:
 
-1. **Hubungkan server** (sidebar kiri bawah): alamat server + akun superadmin. Token login disimpan,
+1. **Hubungkan server** (bilah atas, kanan): alamat server + akun superadmin. Token login disimpan,
    kata sandi tidak.
-2. Buka event, tab **Scan & Nilai** → **Sinkron server**. Pertama kali, event dihubungkan ke
+2. Buka event -> **Sinkron** (bilah atas, kanan). Pertama kali, event dihubungkan ke
    kompetisi server (baru atau yang sudah ada; lihat bagian berikut).
 3. Lembar yang sudah dikonfirmasi/ditandai admin daerah diunduh dan dibaca ulang di laptop
    (mesin yang sama). Data yang dikoreksi admin daerah dipakai, hasil baca asli tetap tampil
-   sebagai "terbaca: …" di Cek Manual. Catatan server (nomor tidak terdaftar, duplikat, koreksi,
-   peserta baru, kualitas foto < 85%) masuk ke daftar perlu cek. Kolom **Lokasi** dan **Foto**
-   (skor kualitas dari HP) tampil di tabel.
+   sebagai "terbaca: …" di panel cek. Catatan server (nomor tidak terdaftar, duplikat, koreksi,
+   peserta baru, kualitas foto < 85%) masuk ke daftar perlu cek. Lembar dari HP bertanda "HP" di antrean;
+   lokasi, pengirim, dan skor kualitas foto tampil di baris **Dikirim** panel cek.
 4. Lembar yang sudah dicek dilaporkan ke server pada sinkron berikutnya (terlihat di panel admin).
 5. Lembar server yang pernah ditarik tetapi tidak ada lagi di event (mis. terhapus) ditawarkan untuk
    ditarik ulang saat sinkron; bila ditolak, lembar itu tidak muncul lagi sampai diminta.
@@ -105,7 +115,7 @@ yang sama dengan bidang di server.
 ### Mengirim event desktop ke server
 
 Kompetisi yang dibuat di web otomatis menjadi event desktop (label "· server"). Arah sebaliknya
-lewat tombol **awan-unggah** di samping judul EVENT (sidebar):
+lewat menu **⋯** di samping judul "Event" (sidebar) -> **Kirim event ke server**:
 
 - **Event belum terhubung**: pilih *Buat kompetisi baru* (nama & tanggal event ini), atau gabungkan
   dengan kompetisi yang sudah ada (kompetisi bernama sama dipilih otomatis). Bidang dari Kunci
@@ -119,7 +129,7 @@ dengan kompetisi yang event desktopnya masih kosong menggantikan event kosong it
 yang event desktopnya sudah berisi kunci/lembar tidak bisa dipilih (supaya lembar yang ditarik tidak
 terbelah ke dua event). Menghapus event di desktop tidak menghapus kompetisi di server, begitu pula sebaliknya.
 
-## Mengajari model membaca bulatan (tab "4. Latih Model")
+## Mengajari model membaca bulatan (tab "Latih model")
 
 Pembacaan utama tetap memakai aturan. Model deep learning (CNN kecil) hanya **juri kedua**:
 bila tidak setuju dengan aturan, lembar ditandai "Perlu cek"; model tidak pernah mengganti
@@ -132,7 +142,7 @@ hasil sendirian. Tanpa model yang lulus ujian, pembacaan sama persis seperti tan
    terbanyak dulu), urut posisi di lembar. **Klik dua kali** kotak (atau Enter) membuka LJK utuh
    (gambar cek) dengan bulatan yang ditanya dilingkari biru; label 1/2/3 bisa diberi di sana dan
    lingkaran pindah ke contoh berikutnya di LJK yang sama.
-2. Lembar yang **Sudah dicek** di Cek Manual ikut menjadi bahan latih (jawaban akhir soal
+2. Lembar yang **Sudah dicek** (panel cek di Scan & nilai) ikut menjadi bahan latih (jawaban akhir soal
    1..jumlah soal, digit nomor & kode).
 3. **Latih ulang model** menjalankan `tools/latih_bulatan.py` di lingkungan PyTorch terpisah
    (`.venv-latih`, CPU, ~1 menit). 1 dari 4 lembar (tetap, menurut nama foto) disisihkan

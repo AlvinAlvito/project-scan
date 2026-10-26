@@ -1,8 +1,8 @@
-"""Komponen tampilan bersama: tampilan kosong, kartu angka, lencana status, toolbar yang menyesuaikan lebar."""
+"""Komponen tampilan bersama: tampilan kosong, kartu hitung, lencana status, toolbar yang menyesuaikan lebar."""
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt
 from PySide6.QtGui import QPainter, QPainterPath
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QStyle, QStyledItemDelegate, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStyle, QStyledItemDelegate,
+                               QVBoxLayout, QWidget)
 
 from app import icons, theme
 
@@ -49,27 +49,29 @@ class EmptyState(QWidget):
         self.icon.setPixmap(icons.pixmap(self.icon_name, theme.c("faint"), 52, self.devicePixelRatioF() or 2.0))
 
 
-class StatCard(QFrame):
-    """Kartu kecil: angka besar + keterangan."""
+class CountCard(QPushButton):
+    """Kartu hitung yang sekaligus penyaring daftar: keterangan kecil di atas angka. Terpilih = tepi warna merek."""
 
-    def __init__(self, caption, tone=None):
+    def __init__(self, caption):
         super().__init__()
-        self.setProperty("role", "stat")
+        self.setProperty("role", "count")
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(56)
+        self.setMinimumWidth(64)
         v = QVBoxLayout(self)
-        v.setContentsMargins(16, 10, 16, 10)
+        v.setContentsMargins(12, 8, 12, 8)
         v.setSpacing(0)
-        self.value = QLabel("0")
-        self.value.setProperty("role", "stat-value")
-        if tone:
-            self.value.setProperty("tone", tone)
         cap = QLabel(caption)
         cap.setProperty("role", "stat-caption")
-        cap.setToolTip(caption)
         # kartu boleh menyempit di jendela sempit (keterangan terpotong, angka tetap terlihat)
         cap.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.setMinimumWidth(64)
-        v.addWidget(self.value)
-        v.addWidget(cap)
+        self.value = QLabel("0")
+        self.value.setProperty("role", "stat-value")
+        for lb in (cap, self.value):
+            lb.setAttribute(Qt.WA_TransparentForMouseEvents)
+            v.addWidget(lb)
+        self.setToolTip(caption)
 
     def set(self, n):
         self.value.setText(str(n))

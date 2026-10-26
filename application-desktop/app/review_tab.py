@@ -1,34 +1,78 @@
-"""Tab 3: cek manual satu lembar - gambar di kiri, data & jawaban yang bisa diubah di kanan."""
+"""Panel cek manual satu lembar (di kanan antrean Scan & Nilai): gambar di kiri, keputusan & data di kanan."""
 import json
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                               QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QScrollArea, QSizePolicy,
-                               QSlider, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFormLayout, QFrame, QGridLayout,
+                               QGroupBox, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
+                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from app import theme
 from app.colors import paint
 from app.imageview import ImageView
-from app.widgets import EmptyState, ShortText, ToolbarFit, badge, divider, set_badge, setup_table, toolbar
+from app.widgets import EmptyState, ToolbarFit, badge, divider, set_badge, setup_table, toolbar
 from ljk import nilai as NI
 from ljk import service as SV
 from ljk import tampilan as TP
 
 CHOICES = [("", "-"), ("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"), ("*", "ganda")]
+PILIHAN = [("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"), ("", "Kosong"), ("*", "Ganda")]  # tombol keputusan
 KIND_TONE = {"ragu": "warn", "ganda": "error"}
 STATUS_TONE = {"OK": "ok", "Perlu cek": "warn", "Sudah dicek": "info", "Gagal": "error"}
 HW_ORDER = [("kotak_nama", "Nama"), ("kotak_nomor", "Nomor"), ("kotak_kode", "Kode"),
             ("kotak_tanggal", "Tanggal"), ("bidang", "Bidang"), ("sekolah", "Sekolah"), ("kelas", "Kelas"),
             ("hp", "HP/WA")]
-HW_MAKS = (460, 56)     # ukuran tampil maksimum potongan tulisan tangan (lebar, tinggi)
-TEGAK = 860             # lebar tab di bawah ini (jendela sempit): gambar di atas, data di bawah
+HW_MAKS = (380, 52)     # ukuran tampil maksimum potongan tulisan tangan (lebar, tinggi)
+TEGAK = 620             # lebar panel di bawah ini (jendela sempit): gambar di atas, data di bawah
+
+
+class ChoiceRow(QWidget):
+    """Tombol pilihan jawaban: satu baris bila muat; bila panel sempit, A-E di atas dan Kosong/Ganda di bawah."""
+
+    def __init__(self, buttons):
+        super().__init__()
+        self.buttons = buttons
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(6)
+        self._wide = None
+        self._place(True)
+
+    def _place(self, wide):
+        if wide == self._wide:
+            return
+        self._wide = wide
+        for b in self.buttons:
+            self.grid.removeWidget(b)
+        for c in range(12):
+            self.grid.setColumnStretch(c, 0)
+        if wide:                                   # A B C D E Kosong Ganda; kata lebih lebar dari huruf
+            col = 0
+            for b in self.buttons:
+                span = 2 if len(b.text()) > 1 else 1
+                self.grid.addWidget(b, 0, col, 1, span)
+                col += span
+            cols = col
+        else:                                      # A-E satu baris, Kosong & Ganda berbagi baris kedua
+            for i, b in enumerate(self.buttons[:5]):
+                self.grid.addWidget(b, 0, i * 2, 1, 2)
+            self.grid.addWidget(self.buttons[5], 1, 0, 1, 5)
+            self.grid.addWidget(self.buttons[6], 1, 5, 1, 5)
+            cols = 10
+        for c in range(cols):
+            self.grid.setColumnStretch(c, 1)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place(self.width() >= 360)
 
 
 class ReviewTab(QWidget):
     changed = Signal()
+    shown = Signal(int)             # id lembar yang sedang tampil (antrean ikut memilihnya)
+    step_requested = Signal(int)    # tombol sebelumnya/berikutnya: -1 / +1 di urutan antrean
 
     def __init__(self, db):
         super().__init__()
@@ -41,58 +85,72 @@ class ReviewTab(QWidget):
         self.answers = []
         self.dirty = False
         self._loading = False
+        self._dec_q = None      # nomor soal (0-based) di kotak keputusan
+        self._first_soal = None
+        # lembar berikutnya sesudah simpan, menurut urutan antrean: fungsi(id) -> id | None (diisi ScanTab)
+        self.next_id = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.page = QWidget()
         v = QVBoxLayout(self.page)
-        v.setContentsMargins(0, 18, 0, 0)
-        v.setSpacing(14)
-        nav = toolbar()
-        self.btn_prev = theme.button("", "chevron-left", "icon", "Lembar sebelumnya", lambda: self._step(-1))
-        self.picker = QComboBox()
-        self.picker.setMinimumWidth(200)
-        self.picker.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.picker.activated.connect(lambda i: self.show_lembar(self.ids[i]))
-        self.btn_next = theme.button("", "chevron-right", "icon", "Lembar berikutnya", lambda: self._step(1))
-        self.only_check = QCheckBox("Lompat ke yang perlu cek saja")
-        self.only_check.setChecked(True)
-        for w in (self.btn_prev, self.picker, self.btn_next):
-            nav.addWidget(w)
-        nav.addSpacing(10)
-        nav.addWidget(self.only_check)
-        nav.addStretch()
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+
+        # ---- kepala: nama peserta, nomor & kode, posisi di antrean
+        head = toolbar(10)
+        names = QVBoxLayout()
+        names.setSpacing(0)
+        self.h_name = QLabel("")
+        self.h_name.setProperty("role", "h2")
+        self.h_sub = QLabel("")
+        self.h_sub.setProperty("role", "muted")
+        for lb in (self.h_name, self.h_sub):
+            lb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)     # nama panjang terpotong, tidak memaksa lebar
+            names.addWidget(lb)
+        head.addLayout(names, 1)
         self.dirty_badge = badge("Belum disimpan", "warn")
         self.dirty_badge.setVisible(False)
         self.status_label = badge("", "neutral")
         self.status_label.setVisible(False)
-        nav.addWidget(self.dirty_badge)
-        nav.addWidget(self.status_label)
-        v.addLayout(nav)
-        ToolbarFit(self.page, nav, (ShortText(self.only_check, "Perlu cek saja"),))
+        head.addWidget(self.dirty_badge, 0, Qt.AlignVCenter)
+        head.addWidget(self.status_label, 0, Qt.AlignVCenter)
+        head.addSpacing(6)
+        self.btn_prev = theme.button("", "chevron-left", "ghost", "Lembar sebelumnya di antrean (Ctrl+↑)",
+                                     lambda: self.step_requested.emit(-1))
+        self.pos_lbl = QLabel("")
+        self.pos_lbl.setProperty("role", "muted")
+        self.btn_next = theme.button("", "chevron-right", "ghost", "Lembar berikutnya di antrean (Ctrl+↓)",
+                                     lambda: self.step_requested.emit(1))
+        for w in (self.btn_prev, self.pos_lbl, self.btn_next):
+            head.addWidget(w, 0, Qt.AlignVCenter)
+        v.addLayout(head)
+        QShortcut(QKeySequence("Ctrl+Up"), self, activated=lambda: self.step_requested.emit(-1))
+        QShortcut(QKeySequence("Ctrl+Down"), self, activated=lambda: self.step_requested.emit(1))
 
         split = self.split = QSplitter(Qt.Horizontal)
         split.setChildrenCollapsible(False)
-        # kiri: gambar
-        left = QWidget()
+        # kiri: gambar di sumur abu-abu, alat zoom & hitam-putih di atasnya
+        left = QFrame()
+        left.setProperty("role", "well")
         lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(10)
+        lv.setContentsMargins(8, 8, 8, 8)
+        lv.setSpacing(6)
         self.view = ImageView()
-        zb = toolbar(6)
+        zb = toolbar(4)
         for ic, tip, fn in (("maximize", "Muat layar", lambda: self.view.fit()),
                             ("zoom-in", "Perbesar (roda mouse)", lambda: self.view.zoom(1.25)),
                             ("zoom-out", "Perkecil (roda mouse)", lambda: self.view.zoom(0.8))):
-            zb.addWidget(theme.button("", ic, "icon", tip, fn))
+            zb.addWidget(theme.button("", ic, "ghost", tip, fn))
         zb.addWidget(divider())
         # tampilan hitam-putih ala scanner (hanya tampilan; hasil baca tidak berubah)
-        self.btn_bw = theme.button("Hitam-putih", "contrast", tip=(
+        self.btn_bw = theme.button("Hitam-putih", "contrast", "ghost", (
             "Tampilan hitam-putih ala scanner: isian pensil tampak hitam pekat, cetakan merah memudar,\n"
             "bekas hapusan tetap terang. Hanya tampilan; hasil baca tidak berubah."))
         self.btn_bw.setCheckable(True)
         self.bw_slider = QSlider(Qt.Horizontal)
         self.bw_slider.setRange(0, 100)
-        self.bw_slider.setFixedWidth(150)
+        self.bw_slider.setFixedWidth(130)
         self.bw_slider.setToolTip("Kontras tampilan: makin ke kanan, goresan tipis makin hitam")
         self.bw_label = QLabel("")
         self.bw_label.setProperty("role", "muted")
@@ -119,26 +177,63 @@ class ReviewTab(QWidget):
         self.bw_slider.valueChanged.connect(self._bw_kontras)
         self.btn_bw.toggled.connect(self._bw_toggled)
         self._bw_controls()
-        lv.addWidget(self.view)
+        lv.addWidget(self.view, 1)
         split.addWidget(left)
 
-        # kanan: data
+        # kanan: keputusan soal yang ditandai, catatan, data, jawaban; tombol simpan selalu terlihat di bawah
         right = QWidget()
         rv = QVBoxLayout(right)
-        rv.setContentsMargins(4, 0, 8, 0)
-        rv.setSpacing(4)
+        rv.setContentsMargins(0, 0, 10, 0)
+        rv.setSpacing(0)
+
+        self.decide = QWidget()
+        dv = QVBoxLayout(self.decide)
+        dv.setContentsMargins(0, 0, 0, 16)
+        dv.setSpacing(4)
+        self.dec_title = QLabel("")
+        self.dec_title.setProperty("role", "h3")
+        self.dec_text = QLabel("")
+        self.dec_text.setProperty("role", "muted")
+        self.dec_text.setWordWrap(True)
+        dv.addWidget(self.dec_title)
+        dv.addWidget(self.dec_text)
+        dv.addSpacing(8)
+        self.dec_group = QButtonGroup(self)
+        self.dec_group.setExclusive(True)
+        self.dec_btns = {}
+        for val, text in PILIHAN:
+            b = QPushButton(text)
+            b.setProperty("role", "choice")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            b.setMinimumWidth(30)
+            b.setToolTip("Tekan A–E di papan ketik" if val in "ABCDE" and val else "")
+            b.clicked.connect(lambda _c=False, vv=val: self._choose(vv))
+            self.dec_group.addButton(b)
+            self.dec_btns[val] = b
+        dv.addWidget(ChoiceRow(list(self.dec_btns.values())))
+        self.decide.setVisible(False)
+        rv.addWidget(self.decide)
+        for letter in "ABCDE":
+            sc = QShortcut(QKeySequence(letter), self, activated=lambda vv=letter: self._choose(vv, key=True))
+            sc.setContext(Qt.WindowShortcut)       # juga saat fokus di antrean; kolom teks tetap menerima ketikan
+
         g_issue = QGroupBox("Catatan")
         g_issue.setToolTip("Klik catatan untuk melihat lokasinya di gambar")
         gl = QVBoxLayout(g_issue)
+        gl.setContentsMargins(0, 0, 0, 0)
         self.issues = QListWidget()
         self.issues.setMaximumHeight(140)
         self.issues.setWordWrap(True)
+        self.issues.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.issues.itemClicked.connect(self._issue_clicked)
         gl.addWidget(self.issues)
         rv.addWidget(g_issue)
 
         g_data = QGroupBox("Data peserta")
         form = QFormLayout(g_data)
+        form.setContentsMargins(0, 0, 0, 0)
         self.f_nama, self.f_nomor, self.f_tanggal = QLineEdit(), QLineEdit(), QLineEdit()
         self.f_kode = QComboBox()
         self.f_kode.setEditable(True)
@@ -165,6 +260,7 @@ class ReviewTab(QWidget):
         g_hw = QGroupBox("Tulisan tangan")
         g_hw.setToolTip("Pembanding dan konfirmasi dengan peserta")
         self.hw_layout = QFormLayout(g_hw)
+        self.hw_layout.setContentsMargins(0, 0, 0, 0)
         self.hw_layout.setSpacing(8)
         self.hw_labels = {}
         for key, label in HW_ORDER:
@@ -176,6 +272,7 @@ class ReviewTab(QWidget):
 
         g_ans = QGroupBox("Jawaban")
         al = QVBoxLayout(g_ans)
+        al.setContentsMargins(0, 0, 0, 0)
         al.setSpacing(10)
         top = toolbar()
         self.score_lbl = QLabel("")
@@ -196,27 +293,37 @@ class ReviewTab(QWidget):
         al.addWidget(self.ans)
         rv.addWidget(g_ans, 1)
 
-        rv.addSpacing(8)
-        btns = toolbar()
-        self.btn_reset = theme.button("Kembalikan", "undo", "ghost", "Kembalikan ke hasil baca awal", self._reset)
-        self.btn_save = theme.button("Simpan && tandai dicek", "check", "primary", "Ctrl+Enter",
-                                     lambda: self._save())
-        btns.addWidget(self.btn_reset)
-        btns.addStretch()
-        btns.addWidget(self.btn_save)
-        rv.addLayout(btns)
-        QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._save)
-
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(right)
-        split.addWidget(scroll)
-        right.setMinimumWidth(520)
-        split.setSizes([760, 640])
+        side = QWidget()
+        sv = QVBoxLayout(side)
+        sv.setContentsMargins(0, 0, 0, 0)
+        sv.setSpacing(8)
+        sv.addWidget(scroll, 1)
+        self.btn_save = theme.button("Simpan dan tandai sudah dicek", "check", "primary",
+                                     "Ctrl+Enter, lalu lanjut ke lembar berikutnya", lambda: self._save())
+        sv.addWidget(self.btn_save)
+        btns = toolbar()
+        self.btn_reset = theme.button("Kembalikan", "undo", "ghost", "Kembalikan ke hasil baca awal", self._reset)
+        hint = QLabel("Ctrl+Enter: simpan, lalu lanjut")
+        hint.setProperty("role", "muted")
+        hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        btns.addWidget(self.btn_reset)
+        btns.addWidget(hint, 1)
+        sv.addLayout(btns)
+        QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._save)
+        split.addWidget(side)
+        right.setMinimumWidth(300)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 1)
+        split.setSizes([460, 420])
         v.addWidget(split, 1)
 
-        self.empty = EmptyState("clipboard-check", "Belum ada lembar untuk dicek",
-                                "Lembar hasil scan akan muncul di sini.")
+        self.empty = EmptyState("clipboard-check", "Pilih lembar di antrean",
+                                "Gambar dan hasil baca lembar yang dipilih tampil di sini.")
         self.stack = QStackedWidget()
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self.page)
@@ -235,17 +342,12 @@ class ReviewTab(QWidget):
             self._clear()
 
     def refresh_list(self):
-        self.picker.clear()
         self.ids, self.status = [], {}
         if self.event_id is None:
             return
         for v in SV.event_views(self.db, self.event_id):
-            r = v.row
-            self.ids.append(r["id"])
-            self.status[r["id"]] = v.status
-            self.picker.addItem(f"{r['urutan']}. {Path(r['file']).name}  -  {r['nama'] or '?'}  [{v.status}]")
-        if self.cur is not None and self.cur["id"] in self.ids:
-            self.picker.setCurrentIndex(self.ids.index(self.cur["id"]))
+            self.ids.append(v.row["id"])
+            self.status[v.row["id"]] = v.status
         names = [f"{s.kode}" for s in self.db.naskah(self.event_id)]
         self._loading = True
         cur = self.f_kode.currentText()
@@ -273,18 +375,11 @@ class ReviewTab(QWidget):
                 return i
         return None
 
-    def _step(self, d):
-        if self.cur is None or not self.ids:
-            return
-        i = self.ids.index(self.cur["id"]) if self.cur["id"] in self.ids else 0
-        j = i + d
-        while 0 <= j < len(self.ids):
-            if not self.only_check.isChecked() or self.status.get(self.ids[j]) in ("Perlu cek", "Gagal"):
-                self.show_lembar(self.ids[j])
-                return
-            j += d
-        QMessageBox.information(self, "Cek manual", "Tidak ada lagi lembar yang perlu dicek ke arah itu."
-                                if self.only_check.isChecked() else "Sudah di ujung daftar.")
+    def set_position(self, i, n):
+        """Posisi lembar ini di antrean yang sedang tampil (i mulai 1); i=0 bila tidak ada di antrean."""
+        self.pos_lbl.setText(f"{i} dari {n}" if i else "")
+        self.btn_prev.setEnabled(i > 1)
+        self.btn_next.setEnabled(0 < i < n)
 
     # ---------------------------------------------------------------- tampil
     def confirm_leave(self):
@@ -298,8 +393,7 @@ class ReviewTab(QWidget):
 
     def show_lembar(self, lembar_id):
         if self.cur is not None and lembar_id != self.cur["id"] and not self.confirm_leave():
-            if self.cur["id"] in self.ids:
-                self.picker.setCurrentIndex(self.ids.index(self.cur["id"]))
+            self.shown.emit(self.cur["id"])        # batal pindah: antrean kembali ke lembar ini
             return
         row = self.db.lembar_by_id(lembar_id)
         if row is None:
@@ -308,8 +402,6 @@ class ReviewTab(QWidget):
         self.stack.setCurrentWidget(self.page)
         self.baca = json.loads(row["baca"] or "{}")
         self.answers = json.loads(row["jawaban"] or "[]") or [""] * 180
-        if lembar_id in self.ids:
-            self.picker.setCurrentIndex(self.ids.index(lembar_id))
         self.view.set_image(row["gambar"])
         self._bw_prep = None
         self._bw_show()
@@ -346,12 +438,24 @@ class ReviewTab(QWidget):
                                   f"kualitas foto {srv.get('skor_kualitas', '?')}% · keyakinan baca server "
                                   f"{srv.get('keyakinan', '?')}% · lembar server #{srv.get('id')}")
         self._form.setRowVisible(self.f_server, bool(srv))
+        self._update_head(srv)
         self._update_kode_label()
         self._fill_issues()
         self._fill_answers()
+        self._set_decision(self._first_soal)
         self._enable(not row["error"])
         self.dirty = False
         self._update_status()
+        self.shown.emit(lembar_id)
+
+    def _update_head(self, srv):
+        r = self.cur
+        s = self._soal()
+        sumber = f"HP · {srv.get('kota', '')}" if srv else Path(r["file"]).name
+        self.h_name.setText(r["nama"] or "Nama tidak terbaca")
+        self.h_sub.setText(" · ".join([r["nomor"] or "—", f"kode {r['kode'] or '—'}" + (f" {s.bidang}" if s else ""),
+                                       f"lembar #{r['urutan']}", sumber]))
+        self.h_sub.setToolTip(r["file"])
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -359,7 +463,7 @@ class ReviewTab(QWidget):
         if tegak != (self.split.orientation() == Qt.Vertical):
             self.split.setOrientation(Qt.Vertical if tegak else Qt.Horizontal)
             total = self.split.height() if tegak else self.split.width()
-            self.split.setSizes([int(total * 0.55), int(total * 0.45)] if tegak else [760, 640])
+            self.split.setSizes([int(total * 0.5), int(total * 0.5)])
 
     # ---- tampilan hitam-putih
     def _bw_controls(self):
@@ -422,7 +526,8 @@ class ReviewTab(QWidget):
         self._enable(False)
 
     def _enable(self, on):
-        for w in (self.f_nama, self.f_nomor, self.f_kode, self.f_tanggal, self.ans, self.btn_save, self.btn_reset):
+        for w in (self.f_nama, self.f_nomor, self.f_kode, self.f_tanggal, self.ans, self.btn_save, self.btn_reset,
+                  self.decide):
             w.setEnabled(on)
 
     def _update_status(self):
@@ -446,6 +551,7 @@ class ReviewTab(QWidget):
 
     def _fill_issues(self):
         self.issues.clear()
+        self._first_soal = None
         view = SV.sheet_view(self.cur, {s.kode: s for s in self.db.naskah(self.event_id)},
                              SV.duplicate_nomor(self.db.lembar(self.event_id)))
         items = list(self.baca.get("issues", []))
@@ -458,6 +564,8 @@ class ReviewTab(QWidget):
             li = QListWidgetItem(it["text"])
             li.setData(Qt.UserRole, it)
             self.issues.addItem(li)
+            if self._first_soal is None and str(it.get("key", "")).startswith("soal:"):
+                self._first_soal = int(it["key"].split(":")[1]) - 1
         if not items:
             self.issues.addItem("Tidak ada catatan.")
 
@@ -524,14 +632,11 @@ class ReviewTab(QWidget):
             paint(it, col)
         if s:
             sk = NI.nilai(self.answers, s)
-            ok, err, mut = theme.tone_hex("ok")[1], theme.tone_hex("error")[1], theme.c("muted")
+            mut = theme.c("muted")
             self.score_lbl.setText(
-                f"<span style='font-size:15pt; font-weight:700'>{sk.nilai}</span>"
-                f"<span style='color:{mut}'>&nbsp; nilai &nbsp;·&nbsp; </span>"
-                f"<span style='color:{ok}; font-weight:600'>{sk.benar} benar</span>"
-                f"<span style='color:{mut}'> &nbsp;·&nbsp; </span>"
-                f"<span style='color:{err}; font-weight:600'>{sk.salah} salah</span>"
-                f"<span style='color:{mut}'> &nbsp;·&nbsp; {sk.kosong} kosong</span>")
+                f"<span style='font-size:14pt; font-weight:600'>{sk.nilai}</span>"
+                f"<span style='color:{mut}'> /{4 * s.jumlah} &nbsp;·&nbsp; {sk.benar} benar &nbsp;·&nbsp; "
+                f"{sk.salah} salah &nbsp;·&nbsp; {sk.kosong} kosong</span>")
         else:
             self.score_lbl.setText(f"<span style='color:{theme.c('muted')}'>Nilai belum bisa dihitung: "
                                    "kode naskah belum terdaftar</span>")
@@ -542,6 +647,49 @@ class ReviewTab(QWidget):
         for q in range(self.ans.rowCount()):
             bad = q < len(kinds) and kinds[q] in ("ragu", "ganda")
             self.ans.setRowHidden(q, only and not bad)
+
+    # ---------------------------------------------------------------- keputusan satu soal
+    def _set_decision(self, q):
+        """Kotak keputusan untuk soal q (0-based): apa yang terbaca dan tombol pilihan jawabannya."""
+        if q is None or q >= self.ans.rowCount():
+            self._dec_q = None
+            self.decide.setVisible(False)
+            return
+        self._dec_q = q
+        kinds = self.baca.get("jawaban_kind", [])
+        read = self.baca.get("jawaban", [])
+        tebak = (self.baca.get("tebakan") or {}).get("jawaban", [])
+        kind = kinds[q] if q < len(kinds) else ""
+        raw = read[q] if q < len(read) else ""
+        guess = tebak[q] if q < len(tebak) and tebak[q] in "ABCDE" else ""
+        if kind == "ragu" or raw == "?":
+            text = "Isian tipis atau bekas hapusan" + (f"; mesin menebak {guess}." if guess else ".")
+        elif kind == "ganda" or raw == "*":
+            text = "Lebih dari satu pilihan terisi; dihitung salah kecuali dipilih salah satu."
+        else:
+            text = f"Terbaca {raw}." if raw else "Terbaca kosong."
+        self.dec_title.setText(f"Soal {q + 1}")
+        self.dec_text.setText(text + " Pastikan pilihannya.")
+        self.decide.setVisible(True)
+        self._sync_decision()
+
+    def _sync_decision(self):
+        if self._dec_q is None:
+            return
+        b = self.dec_btns.get(self.answers[self._dec_q])
+        if b is not None:
+            b.setChecked(True)
+
+    def _choose(self, val, key=False):
+        q = self._dec_q
+        if q is None or not self.decide.isVisible() or not self.decide.isEnabled() or q >= self.ans.rowCount():
+            return
+        combo = self.ans.cellWidget(q, 2)
+        vals = [c[0] for c in CHOICES]
+        combo.setCurrentIndex(vals.index(val))     # memicu _answer_changed: tandai belum disimpan, hitung ulang nilai
+        self._sync_decision()
+        if key:
+            self.dec_btns[val].setFocus()
 
     # ---------------------------------------------------------------- aksi
     def _mark_dirty(self, *_):
@@ -555,11 +703,14 @@ class ReviewTab(QWidget):
         self._mark_dirty()
         self._update_kode_label()
         self._fill_answers()
+        self._set_decision(self._dec_q)
 
     def _answer_changed(self, q, combo):
         self.answers[q] = combo.currentData()
         self._mark_dirty()
         self._update_results()
+        if q == self._dec_q:
+            self._sync_decision()
 
     def _issue_clicked(self, item):
         it = item.data(Qt.UserRole)
@@ -570,14 +721,15 @@ class ReviewTab(QWidget):
         if key.startswith("soal:"):
             q = int(key.split(":")[1]) - 1
             if q < self.ans.rowCount():
+                self._set_decision(q)
                 self.ans.selectRow(q)
                 self.ans.scrollToItem(self.ans.item(q, 0))
-                self.ans.cellWidget(q, 2).setFocus()
         elif key.startswith(("nama", "nomor", "kode", "tanggal")):
             {"nama": self.f_nama, "nomor": self.f_nomor, "kode": self.f_kode,
              "tanggal": self.f_tanggal}[key.split(":")[0]].setFocus()
 
     def _answer_clicked(self, r, _c):
+        self._set_decision(r)
         xy = self.baca.get("jawaban_xy", [])
         if r < len(xy):
             self.view.focus(*xy[r])
@@ -598,6 +750,7 @@ class ReviewTab(QWidget):
         self.answers = [a if a in valid else "" for a in t.get("jawaban", [""] * 180)]
         self._update_kode_label()
         self._fill_answers()
+        self._set_decision(self._dec_q)
         self.dirty = True
         self._update_status()
 
@@ -617,22 +770,23 @@ class ReviewTab(QWidget):
             warn.append(f"Kode naskah '{kode}' belum terdaftar di kunci; lembar ini tidak akan ikut diekspor.")
         if warn and QMessageBox.question(self, "Simpan", "\n".join(warn) + "\n\nTetap simpan?") != QMessageBox.Yes:
             return False
-        self.db.save_review(self.cur["id"], nama, nomor, kode, tanggal, self.answers, dicek=True)
-        self.dirty = False
         cur_id = self.cur["id"]
+        # lembar berikutnya menurut antrean ditentukan sebelum status lembar ini berubah
+        nxt = self.next_id(cur_id) if go_next and self.next_id is not None else None
+        self.db.save_review(cur_id, nama, nomor, kode, tanggal, self.answers, dicek=True)
+        self.dirty = False
         self.refresh_list()
         self.changed.emit()
         self.cur = self.db.lembar_by_id(cur_id)
         if go_next:
-            nxt = None
-            if cur_id in self.ids:
+            if nxt is None and self.next_id is None and cur_id in self.ids:
                 i = self.ids.index(cur_id)
                 for j in range(i + 1, len(self.ids)):
                     if self.status.get(self.ids[j]) in ("Perlu cek", "Gagal"):
                         nxt = self.ids[j]
                         break
-            if nxt is None:
-                nxt = self._first_to_check()
+                if nxt is None:
+                    nxt = self._first_to_check()
             if nxt is not None and nxt != cur_id:
                 self.show_lembar(nxt)
                 return True

@@ -1,8 +1,10 @@
-"""Tema aplikasi: "gelap" dan "terang" (biru tua + putih).
+"""Tema aplikasi: "terang" dan "gelap", gaya "framed sheet".
 
+Bingkai (bilah atas + sidebar) satu warna redup; isi halaman ada di lembar putih bertepi 1 px tanpa bayangan.
+Warna merek hanya di status terpilih, garis tab, dan tombol utama; selebihnya abu-abu, warna dipakai untuk data.
 Semua warna diambil dari palet di sini, jadi mengganti tema cukup memanggil apply().
 - Tombol diberi gaya lewat properti "variant": primary | ghost | danger | icon (bawaan: biasa).
-- Label diberi gaya lewat properti "role": title | subtitle | muted | section | badge (+ "tone").
+- Label diberi gaya lewat properti "role": title | h2 | subtitle | muted | section | badge (+ "tone").
 - Warna sel tabel memakai "tone" (ok, warn, error, info, chosen) lewat app.colors.paint().
 """
 import tempfile
@@ -15,94 +17,111 @@ from PySide6.QtWidgets import QAbstractButton, QApplication, QPushButton, QTable
 
 from app import icons
 
+FONTS = Path(__file__).resolve().parent / "fonts"     # IBM Plex (lisensi OFL, lihat fonts/OFL.txt)
+SANS, MONO = "IBM Plex Sans", "IBM Plex Mono"
+
 PALETTES = {
-    "gelap": dict(
-        bg="#0e1116", surface="#151a21", surface2="#1b212a", input="#10141a", canvas="#0a0c10",
-        border="#252c37", border_strong="#353e4d",
-        text="#e8ebf1", muted="#8c95a7", faint="#566073", icon="#b8c0ce",
-        accent="#5b8cff", accent_hover="#77a0ff", accent_press="#4677ee", on_accent="#ffffff",
-        accent_soft="#1d2a45", accent_text="#9dbbff",
-        hover="#1f2631", selection="#22314d",
-        side_bg="#0a0d11", side_text="#e8ebf1", side_muted="#768096", side_hover="#151a22",
-        side_sel="#1b2538", side_border="#1a1f28",
-        danger="#f87171", danger_soft="#3a1a1d",
-    ),
     "terang": dict(
-        bg="#f2f5f9", surface="#ffffff", surface2="#f6f8fb", input="#ffffff", canvas="#e4e9f0",
-        border="#dbe2ec", border_strong="#c3cddb",
-        text="#0f1d33", muted="#5b6a80", faint="#9aa6b8", icon="#2c4266",
+        frame="#f6f8fa", bg="#ffffff", surface="#ffffff", surface2="#f3f5f7", input="#ffffff", canvas="#f3f5f7",
+        border="#e6e9ec", border_strong="#cdd1d6", rule="#eff1f3",
+        text="#131416", muted="#5a5e63", faint="#6b7076", icon="#4a4e54",
         accent="#1e3a8a", accent_hover="#2a4aa6", accent_press="#162d6e", on_accent="#ffffff",
-        accent_soft="#e4ebf8", accent_text="#1e3a8a",
-        hover="#edf1f7", selection="#dfe8f7",
-        side_bg="#0f2747", side_text="#f1f5fb", side_muted="#93a8c6", side_hover="#17355d",
-        side_sel="#234a80", side_border="#0f2747",
-        danger="#c62828", danger_soft="#fdecec",
+        accent_soft="#eef2fa", accent_text="#1e3a8a",
+        hover="#f3f5f7", selection="#e9ecef",
+        side_bg="#f6f8fa", side_text="#131416", side_muted="#5a5e63", side_hover="#eceff2",
+        side_sel="#e3e7eb", side_border="#e6e9ec",
+        danger="#c4242a", danger_soft="#ffedea",
+    ),
+    # gelap: abu-abu netral (bukan navy), tingkat terang membedakan permukaan
+    "gelap": dict(
+        frame="#0c0c0d", bg="#161618", surface="#161618", surface2="#1f1f22", input="#111113", canvas="#0f0f10",
+        border="#2a2a2e", border_strong="#3f3f44", rule="#222225",
+        text="#f1f1f2", muted="#b4b4b8", faint="#8e8e93", icon="#c4c4c8",
+        accent="#5b8cff", accent_hover="#77a0ff", accent_press="#4677ee", on_accent="#0b1020",
+        accent_soft="#1a2238", accent_text="#9dbbff",
+        hover="#1f1f22", selection="#2a2a2e",
+        side_bg="#0c0c0d", side_text="#f1f1f2", side_muted="#a0a0a5", side_hover="#18181a",
+        side_sel="#232326", side_border="#2a2a2e",
+        danger="#f0717a", danger_soft="#2c1a1d",
     ),
 }
 
-# Warna penanda (latar, teks) untuk status, sel tabel, dan lencana.
+# Warna penanda (latar pucat, teks gelap dari rona yang sama) untuk status, sel tabel, dan lencana.
 TONES = {
-    "gelap": {
-        "ok": ("#12301f", "#6ee7a0"), "warn": ("#3a2a0f", "#fbbf5a"), "error": ("#3d171a", "#fca5a5"),
-        "info": ("#172846", "#9dbbff"), "chosen": ("#5b8cff", "#ffffff"), "neutral": ("#1f2631", "#b8c0ce"),
-    },
     "terang": {
-        "ok": ("#e2f5ea", "#146c43"), "warn": ("#fff2d9", "#8a5600"), "error": ("#fde7e7", "#b42318"),
-        "info": ("#e4ebf8", "#1e3a8a"), "chosen": ("#1e3a8a", "#ffffff"), "neutral": ("#edf1f7", "#2c4266"),
+        "ok": ("#dcfae5", "#14532d"), "warn": ("#fffbeb", "#92400e"), "error": ("#ffedea", "#831c1e"),
+        "info": ("#eef2fa", "#1e3a8a"), "chosen": ("#1e3a8a", "#ffffff"), "neutral": ("#ebedee", "#353736"),
+    },
+    "gelap": {
+        "ok": ("#16291d", "#5fd08f"), "warn": ("#2b2414", "#e5a93b"), "error": ("#2c1a20", "#f0717a"),
+        "info": ("#1a2238", "#9dbbff"), "chosen": ("#5b8cff", "#0b1020"), "neutral": ("#232326", "#d4d4d8"),
     },
 }
 
 QSS = Template("""
 * { outline: 0; }
 QWidget { color: $text; font-size: 10pt; }
-QMainWindow, QDialog, #content, QTabWidget > QWidget, QScrollArea > QWidget > QWidget { background: $bg; }
-QToolTip { background: $surface2; color: $text; border: 1px solid $border_strong; border-radius: 6px; padding: 6px 8px; }
+QMainWindow, #frame, #topbar { background: $frame; }
+#sheet { background: $bg; border: 1px solid $border; border-radius: 16px; }
+QDialog, QTabWidget > QWidget, QScrollArea > QWidget > QWidget { background: $bg; }
+QToolTip { background: $surface; color: $text; border: 1px solid $border_strong; border-radius: 6px; padding: 6px 8px; }
 
-/* ---------- sidebar */
-#sidebar { background: $side_bg; border-right: 1px solid $side_border; }
+/* ---------- bingkai: bilah atas + sidebar, satu warna tanpa garis di antaranya */
+#sidebar { background: $side_bg; }
+#sidebar[floating="true"] { border-right: 1px solid $side_border; }
 #sidebar QLabel { color: $side_text; background: transparent; }
 #sidebar QLabel[role="muted"], #sidebar QLabel[role="section"] { color: $side_muted; }
-#sidebar QListWidget { background: transparent; border: none; }
-#sidebar QPushButton { background: transparent; color: $side_text; border: 1px solid transparent;
-    border-radius: 8px; padding: 9px 12px; text-align: left; }
-#sidebar QPushButton:hover { background: $side_hover; }
+#sidebar QListWidget { background: transparent; border: none; padding: 0; }
+#sidebar QPushButton { background: transparent; color: $side_muted; border: 1px solid transparent;
+    border-radius: 8px; padding: 6px 8px; text-align: left; font-weight: 400; }
+#sidebar QPushButton:hover { background: $side_hover; color: $side_text; }
 #sidebar QPushButton:pressed { background: $side_sel; }
-#sidebar QPushButton:disabled { color: $side_muted; }
-#sidebar QPushButton[variant="primary"] { background: $accent; color: $on_accent; text-align: center; font-weight: 600; }
-#sidebar QPushButton[variant="primary"]:hover { background: $accent_hover; }
-#sidebar QPushButton[variant="icon"] { padding: 8px; text-align: center; border: 1px solid $side_hover; }
+#sidebar QPushButton:disabled { color: $faint; }
+#sidebar QPushButton[variant="icon"] { padding: 5px; text-align: center; }
+#topbar QPushButton[variant="ghost"] { color: $muted; font-weight: 400; }
+#topbar QPushButton[variant="ghost"]:hover { color: $text; background: $side_hover; }
+QLineEdit#search { background: $surface; border: 1px solid $border; padding: 5px 10px; }
+QLineEdit#search:focus { border-color: $accent; }
 
 /* ---------- teks */
 QLabel { background: transparent; }
-QLabel[role="title"] { font-size: 15pt; font-weight: 600; }
-QLabel[role="brand"] { font-size: 13pt; font-weight: 700; }
+QLabel[role="title"] { font-size: 16pt; font-weight: 600; }
+QLabel[role="h2"] { font-size: 12pt; font-weight: 600; }
+QLabel[role="h3"] { font-weight: 600; }
+QLabel[role="brand"] { font-size: 10.5pt; font-weight: 600; }
 QLabel[role="subtitle"], QLabel[role="muted"] { color: $muted; }
-QLabel[role="section"] { color: $muted; font-size: 8pt; font-weight: 700; letter-spacing: 1px; }
+QLabel[role="section"] { color: $muted; font-size: 9pt; }
 QLabel[role="empty-title"] { font-size: 13pt; font-weight: 600; }
-QLabel[role="badge"] { border-radius: 11px; padding: 3px 10px; font-weight: 600; font-size: 9pt; }
+QLabel[role="badge"] { border-radius: 10px; padding: 2px 8px; font-weight: 500; font-size: 9pt; }
 QLabel[role="badge"][tone="warn"] { background: $warn_bg; color: $warn_fg; }
 QLabel[role="badge"][tone="ok"] { background: $ok_bg; color: $ok_fg; }
 QLabel[role="badge"][tone="error"] { background: $error_bg; color: $error_fg; }
 QLabel[role="badge"][tone="info"] { background: $info_bg; color: $info_fg; }
 QLabel[role="badge"][tone="neutral"] { background: $neutral_bg; color: $neutral_fg; }
-QLabel[role="stat-value"] { font-size: 17pt; font-weight: 700; }
-QLabel[role="stat-value"][tone="ok"] { color: $ok_fg; }
-QLabel[role="stat-value"][tone="warn"] { color: $warn_fg; }
-QLabel[role="stat-value"][tone="error"] { color: $error_fg; }
-QLabel[role="stat-value"][tone="info"] { color: $info_fg; }
-QLabel[role="stat-caption"] { color: $muted; font-size: 9pt; }
+QLabel[role="stat-value"] { font-size: 12pt; font-weight: 600; }
+QLabel[role="stat-caption"] { color: $muted; font-size: 9.5pt; }
 
-QFrame[role="card"], QFrame[role="stat"] { background: $surface; border: 1px solid $border; border-radius: 12px; }
+QFrame[role="card"], QFrame[role="stat"] { background: $surface; border: 1px solid $border; border-radius: 8px; }
 QFrame[role="toolbar"] { background: transparent; }
 QFrame[role="divider"] { background: $border; max-width: 1px; min-width: 1px; }
+QFrame[role="well"] { background: $canvas; border: none; border-radius: 8px; }
 
-/* ---------- tombol */
-QPushButton { background: $surface2; color: $text; border: 1px solid $border; border-radius: 8px;
-    padding: 8px 16px; min-height: 20px; font-weight: 500; }
-QPushButton:hover { background: $hover; border-color: $border_strong; }
+/* kartu hitung: angka per status, sekaligus penyaring daftar lembar */
+QPushButton[role="count"] { background: $surface; border: 1px solid $border; border-radius: 8px; padding: 0; text-align: left;
+    min-height: 54px; max-height: 54px; }
+QPushButton[role="count"]:hover { border-color: $border_strong; background: $surface; }
+QPushButton[role="count"]:checked { background: $accent_soft; border: 1px solid $accent; }
+
+/* ---------- tombol: putih bertepi, sudut 6 px; tombol utama warna merek */
+QPushButton { background: $surface; color: $text; border: 1px solid $border_strong; border-radius: 6px;
+    padding: 6px 12px; min-height: 18px; font-weight: 500; }
+QPushButton:hover { background: $hover; }
 QPushButton:pressed { background: $selection; }
-QPushButton:disabled { color: $faint; background: $surface; border-color: $border; }
+QPushButton:disabled { color: $faint; background: $surface2; border-color: $border; }
 QPushButton:checked { background: $accent_soft; border-color: $accent; color: $accent_text; }
+QPushButton::menu-indicator { image: url("$arrow_down"); subcontrol-position: right center; subcontrol-origin: padding;
+    width: 12px; height: 12px; right: 8px; }
+QPushButton[menu="true"] { padding-right: 28px; }
 QPushButton[variant="primary"] { background: $accent; color: $on_accent; border: 1px solid $accent; font-weight: 600; }
 QPushButton[variant="primary"]:hover { background: $accent_hover; border-color: $accent_hover; }
 QPushButton[variant="primary"]:pressed { background: $accent_press; }
@@ -111,23 +130,32 @@ QPushButton[variant="ghost"] { background: transparent; border-color: transparen
 QPushButton[variant="ghost"]:hover { background: $hover; }
 QPushButton[variant="danger"] { color: $danger; }
 QPushButton[variant="danger"]:hover { background: $danger_soft; border-color: $danger; }
-QPushButton[variant="icon"] { padding: 7px; min-width: 22px; }
+QPushButton[variant="icon"] { padding: 6px; min-width: 18px; }
+QPushButton[role="choice"] { min-width: 18px; padding: 7px 0; font-weight: 600; }
+QPushButton[role="choice"]:checked { background: $accent_soft; border-color: $accent; color: $accent_text; }
 
-/* ---------- tab */
+QMenu { background: $surface; border: 1px solid $border_strong; border-radius: 8px; padding: 4px; }
+QMenu::item { padding: 7px 28px 7px 12px; border-radius: 6px; }
+QMenu::item:selected { background: $hover; color: $text; }
+QMenu::item:disabled { color: $faint; }
+QMenu::icon { padding-left: 10px; }
+QMenu::separator { height: 1px; background: $border; margin: 4px 6px; }
+
+/* ---------- tab: garis bawah 2 px warna merek di atas garis 1 px selebar lembar */
 QTabWidget::pane { border: none; border-top: 1px solid $border; top: -1px; }
 QTabBar { qproperty-drawBase: 0; background: transparent; }
-QTabBar::tab { background: transparent; color: $muted; padding: 11px 18px; margin-right: 4px;
-    border: none; border-bottom: 2px solid transparent; font-weight: 600; }
+QTabBar::tab { background: transparent; color: $muted; padding: 9px 0; margin-right: 24px;
+    border: none; border-bottom: 2px solid transparent; font-weight: 500; }
 QTabBar::tab:hover { color: $text; }
 QTabBar::tab:selected { color: $text; border-bottom: 2px solid $accent; }
 QTabBar::tab:disabled { color: $faint; }
 
 /* ---------- input */
-QLineEdit, QSpinBox, QComboBox, QPlainTextEdit { background: $input; color: $text; border: 1px solid $border;
-    border-radius: 8px; padding: 7px 10px; selection-background-color: $accent; selection-color: $on_accent; }
-QLineEdit:hover, QSpinBox:hover, QComboBox:hover { border-color: $border_strong; }
+QLineEdit, QSpinBox, QComboBox, QPlainTextEdit { background: $input; color: $text; border: 1px solid $border_strong;
+    border-radius: 6px; padding: 6px 10px; selection-background-color: $accent; selection-color: $on_accent; }
+QLineEdit:hover, QSpinBox:hover, QComboBox:hover { border-color: $faint; }
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus { border-color: $accent; }
-QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled { color: $faint; background: $surface; }
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled { color: $faint; background: $surface2; }
 QComboBox { padding-right: 30px; }
 QComboBox::drop-down { border: none; width: 28px; subcontrol-origin: padding; subcontrol-position: center right; }
 QComboBox::down-arrow { image: url("$arrow_down"); width: 14px; height: 14px; }
@@ -136,10 +164,10 @@ QComboBox QAbstractItemView { background: $surface; border: 1px solid $border_st
 QSpinBox::up-button, QSpinBox::down-button { border: none; width: 22px; background: transparent; }
 QSpinBox::up-arrow { image: url("$arrow_up"); width: 12px; height: 12px; }
 QSpinBox::down-arrow { image: url("$arrow_down"); width: 12px; height: 12px; }
-QPlainTextEdit { font-family: "Cascadia Mono", "Consolas"; font-size: 9pt; }
+QPlainTextEdit { font-family: "IBM Plex Mono", "Cascadia Mono", "Consolas"; font-size: 9pt; }
 
 QCheckBox { spacing: 8px; background: transparent; }
-QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 1px solid $border_strong; background: $input; }
+QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px; border: 1px solid $border_strong; background: $input; }
 QCheckBox::indicator:hover { border-color: $accent; }
 QCheckBox::indicator:checked { background: $accent; border-color: $accent; image: url("$check"); }
 
@@ -149,35 +177,37 @@ QSlider::sub-page:horizontal { height: 4px; background: $accent; border-radius: 
 QSlider::handle:horizontal { width: 16px; height: 16px; margin: -6px 0; border-radius: 8px; background: $accent; }
 QSlider::handle:horizontal:hover { background: $accent_hover; }
 
-/* ---------- tabel & daftar */
-QTableView { background: $surface; alternate-background-color: $surface2; border: 1px solid $border;
-    border-radius: 12px; gridline-color: $border; selection-background-color: $selection; selection-color: $text; }
-QTableView::item { padding: 0 10px; border-bottom: 1px solid $border; }
+/* ---------- tabel & daftar: tanpa zebra, kepala tanpa pita, garis baris tipis */
+QTableView { background: $surface; alternate-background-color: $surface; border: 1px solid $border;
+    border-radius: 8px; gridline-color: $rule; selection-background-color: $selection; selection-color: $text; }
+QTableView::item { padding: 0 10px; border-bottom: 1px solid $rule; }
 QTableView::item:selected { background: $selection; color: $text; }
-QTableView QTableCornerButton::section { background: $surface2; border: none; }
+QTableView QTableCornerButton::section { background: $surface; border: none; }
 QHeaderView { background: transparent; }
-QHeaderView::section { background: $surface2; color: $muted; border: none; border-bottom: 1px solid $border;
-    padding: 9px 10px; font-weight: 600; font-size: 9pt; }
-QHeaderView::section:first { border-top-left-radius: 12px; }
-QHeaderView::section:last { border-top-right-radius: 12px; }
+QHeaderView::section { background: $surface; color: $muted; border: none; border-bottom: 1px solid $border;
+    padding: 8px 10px; font-weight: 400; font-size: 9pt; }
+QHeaderView::section:first { border-top-left-radius: 8px; }
+QHeaderView::section:last { border-top-right-radius: 8px; }
 
-QListWidget { background: $surface; border: 1px solid $border; border-radius: 10px; padding: 4px; }
-QListWidget::item { padding: 8px 10px; border-radius: 6px; }
+QListWidget { background: $surface; border: 1px solid $border; border-radius: 8px; padding: 4px; }
+QListWidget::item { padding: 7px 10px; border-radius: 6px; }
 QGroupBox QListWidget { border: none; background: transparent; padding: 0; }
 QListWidget::item:hover { background: $hover; }
 QListWidget::item:selected { background: $selection; color: $text; }
+QListWidget#queue { background: transparent; border: none; border-top: 1px solid $border; border-radius: 0; padding: 0; }
 
-QGroupBox { background: $surface; border: 1px solid $border; border-radius: 12px; margin-top: 26px;
-    padding: 14px 14px 12px 14px; font-weight: 600; }
-QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 4px; top: 2px;
-    padding: 0 4px; color: $muted; }
+/* bagian di panel cek: judul di bawah garis tipis, tanpa kotak */
+QGroupBox { background: transparent; border: none; border-top: 1px solid $rule; margin-top: 4px;
+    padding: 34px 0 6px 0; font-weight: 600; }
+QGroupBox::title { subcontrol-origin: padding; subcontrol-position: top left; left: 0; top: 12px; padding: 0; color: $text; }
 
-QProgressBar { background: $surface2; border: none; border-radius: 4px; max-height: 8px; min-height: 8px; }
-QProgressBar::chunk { background: $accent; border-radius: 4px; }
+QProgressBar { background: $surface2; border: none; border-radius: 3px; max-height: 6px; min-height: 6px; }
+QProgressBar::chunk { background: $accent; border-radius: 3px; }
 
 QScrollArea { background: transparent; border: none; }
 QSplitter::handle { background: transparent; }
-QSplitter::handle:horizontal { width: 10px; }
+QSplitter::handle:horizontal { width: 16px; }
+QSplitter::handle:vertical { height: 16px; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
 QScrollBar::handle { background: $border_strong; border-radius: 3px; min-height: 30px; min-width: 30px; }
@@ -185,7 +215,7 @@ QScrollBar::handle:hover { background: $faint; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
-QGraphicsView { border: 1px solid $border; border-radius: 12px; }
+QGraphicsView { border: none; border-radius: 8px; }
 QMessageBox QLabel { min-width: 280px; }
 """)
 
@@ -197,6 +227,7 @@ class _Bus(QObject):
 bus = _Bus()
 _name = "gelap"
 _dir = Path(tempfile.gettempdir()) / "ljk-reader-theme"
+_fonts_loaded = False
 
 
 def name():
@@ -228,17 +259,28 @@ def _asset(name_, color):
     return f.as_posix()
 
 
+def _load_fonts():
+    """Daftarkan IBM Plex yang ikut dalam paket aplikasi (sekali saja)."""
+    global _fonts_loaded
+    if not _fonts_loaded:
+        _fonts_loaded = True
+        for f in sorted(FONTS.glob("*.ttf")):
+            QFontDatabase.addApplicationFont(str(f))
+
+
 def _font():
+    _load_fonts()
     fams = set(QFontDatabase.families())
-    for fam in ("Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Inter"):
+    for fam in (SANS, "Segoe UI Variable Text", "Segoe UI", "Inter"):
         if fam in fams:
             return QFont(fam, 10)
     return QFont()
 
 
 def mono(size=10):
+    _load_fonts()
     f = QFont()
-    f.setFamilies(["Cascadia Mono", "Consolas", "Courier New"])
+    f.setFamilies([MONO, "Cascadia Mono", "Consolas", "Courier New"])
     f.setPointSize(size)
     return f
 
@@ -259,9 +301,9 @@ def apply(theme=None, save=True):
 
     pal = QPalette()
     for role, key in ((QPalette.Window, "bg"), (QPalette.WindowText, "text"), (QPalette.Base, "surface"),
-                      (QPalette.AlternateBase, "surface2"), (QPalette.Text, "text"), (QPalette.Button, "surface2"),
+                      (QPalette.AlternateBase, "surface"), (QPalette.Text, "text"), (QPalette.Button, "surface"),
                       (QPalette.ButtonText, "text"), (QPalette.Highlight, "accent"),
-                      (QPalette.HighlightedText, "on_accent"), (QPalette.ToolTipBase, "surface2"),
+                      (QPalette.HighlightedText, "on_accent"), (QPalette.ToolTipBase, "surface"),
                       (QPalette.ToolTipText, "text"), (QPalette.PlaceholderText, "faint"), (QPalette.Link, "accent")):
         pal.setColor(role, QColor(p[key]))
     pal.setColor(QPalette.Disabled, QPalette.Text, QColor(p["faint"]))
@@ -303,7 +345,7 @@ def _icon_color(w):
     if v == "danger":
         return c("danger")
     if _in_sidebar(w):
-        return c("side_text")
+        return c("side_muted")
     return c("icon")
 
 
@@ -341,6 +383,10 @@ class Button(QPushButton):
             self.setToolTip(self._tip or "")
         self._compact = on
         self.setText(self._label)
+
+    def setMenu(self, menu):
+        super().setMenu(menu)
+        self.setProperty("menu", menu is not None)
 
 
 def button(text, icon_name=None, variant=None, tip=None, slot=None):
