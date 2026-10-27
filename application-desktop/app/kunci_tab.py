@@ -2,18 +2,56 @@
 import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-                               QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ljk import kunci as KU
-from app import theme
+from app import icons, theme
 from app.colors import paint
 from app.kunci_dialog import KunciDialog
 from app.widgets import EmptyState, ToolbarFit, badge, divider, setup_table, toolbar
 from ljk import nilai as NI
 
 COL_KODE, COL_BIDANG, COL_JUMLAH, COL_KUNCI, COL_CATATAN = range(5)
+LIHAT, ISI = "Lihat kunci jawaban", "Isi kunci jawaban"
+
+
+class KunciLinkDelegate(QStyledItemDelegate):
+    """Kolom Kunci tidak memperlihatkan isi kunci, hanya tautan "Lihat kunci jawaban" yang membuka editor
+    per nomor. Isi kunci tetap disimpan sebagai teks sel (dipakai simpan, impor, dan editor)."""
+    PAD, ICON, GAP = 10, 16, 8
+
+    def _font(self, option, hover=False):
+        f = QFont(option.widget.font() if option.widget else option.font)
+        f.setWeight(QFont.Medium)
+        f.setUnderline(hover)
+        return f
+
+    def paint(self, p, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""                                   # latar, pilihan, dan garis baris tetap dari gaya tabel
+        w = opt.widget
+        (w.style() if w else QApplication.style()).drawControl(QStyle.CE_ItemViewItem, opt, p, w)
+        ada = bool((index.data() or "").strip())
+        r = option.rect.adjusted(self.PAD, 0, -self.PAD, 0)
+        pm = icons.pixmap("eye" if ada else "pencil", theme.c("icon" if ada else "muted"), self.ICON,
+                          w.devicePixelRatioF() if w else 2.0)
+        p.save()
+        p.drawPixmap(r.left(), r.center().y() - self.ICON // 2 + 1, pm)
+        p.setFont(self._font(option, bool(option.state & QStyle.State_MouseOver)))
+        p.setPen(QColor(theme.c("text" if ada else "muted")))
+        tr = r.adjusted(self.ICON + self.GAP, 0, 0, 0)
+        p.drawText(tr, Qt.AlignLeft | Qt.AlignVCenter,
+                   QFontMetrics(p.font()).elidedText(LIHAT if ada else ISI, Qt.ElideRight, tr.width()))
+        p.restore()
+
+    def sizeHint(self, option, index):
+        lebar = QFontMetrics(self._font(option)).horizontalAdvance(LIHAT)
+        return QSize(2 * self.PAD + self.ICON + self.GAP + lebar + 4, super().sizeHint(option, index).height())
 
 
 class KunciTab(QWidget):
@@ -66,17 +104,23 @@ class KunciTab(QWidget):
         self.table.setHorizontalHeaderLabels(["Kode naskah", "Bidang", "Soal", "Kunci", "Catatan"])
         setup_table(self.table)
         self.table.setSelectionBehavior(QTableWidget.SelectItems)
-        self.table.setToolTip("Klik dua kali kolom Soal / Kunci untuk mengedit per nomor.\n"
+        self.table.setToolTip("Klik \"Lihat kunci jawaban\" untuk melihat atau mengedit kunci per nomor.\n"
                               "Kode naskah dan bidang bisa diketik langsung.")
+        self.table.setItemDelegateForColumn(COL_KUNCI, KunciLinkDelegate(self.table))
+        self.table.setMouseTracking(True)
+        self.table.viewport().setAttribute(Qt.WA_Hover, True)
+        self.table.entered.connect(lambda i: self.table.viewport().setCursor(
+            Qt.PointingHandCursor if i.column() == COL_KUNCI else Qt.ArrowCursor))
+        self.table.viewportEntered.connect(lambda: self.table.viewport().setCursor(Qt.ArrowCursor))
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(COL_KODE, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(COL_BIDANG, QHeaderView.Interactive)
         h.setSectionResizeMode(COL_JUMLAH, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(COL_KUNCI, QHeaderView.Stretch)
-        h.setSectionResizeMode(COL_CATATAN, QHeaderView.Interactive)
-        self.table.setColumnWidth(COL_CATATAN, 320)
+        h.setSectionResizeMode(COL_KUNCI, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(COL_CATATAN, QHeaderView.Stretch)
         self.table.setColumnWidth(COL_BIDANG, 220)
         self.table.itemChanged.connect(self._item_changed)
+        self.table.cellClicked.connect(self._cell_clicked)
         self.table.cellDoubleClicked.connect(self._double_click)
         self.empty = EmptyState("key", "Belum ada kunci jawaban",
                                 "Impor dari PDF pembahasan atau Excel, atau tambah bidang secara manual.")
@@ -209,8 +253,12 @@ class KunciTab(QWidget):
         QMessageBox.information(self, "Kunci", f"{len(soal)} kode naskah tersimpan.")
 
     # ---- editor per nomor
+    def _cell_clicked(self, r, c):
+        if c == COL_KUNCI:              # tautan "Lihat kunci jawaban": cukup sekali klik
+            self._edit_row(r)
+
     def _double_click(self, r, c):
-        if c in (COL_JUMLAH, COL_KUNCI, COL_CATATAN):
+        if c in (COL_JUMLAH, COL_CATATAN):
             self._edit_row(r)
 
     def _edit_current(self):
