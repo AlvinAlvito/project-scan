@@ -215,9 +215,12 @@ class ReviewTab(QWidget):
         dv.addWidget(ChoiceRow(list(self.dec_btns.values())))
         self.decide.setVisible(False)
         rv.addWidget(self.decide)
+        self._huruf = []
         for letter in "ABCDE":
             sc = QShortcut(QKeySequence(letter), self, activated=lambda vv=letter: self._choose(vv, key=True))
             sc.setContext(Qt.WindowShortcut)       # juga saat fokus di antrean; kolom teks tetap menerima ketikan
+            self._huruf.append(sc)
+        QApplication.instance().focusChanged.connect(self._focus_changed)
 
         g_issue = QGroupBox("Catatan")
         g_issue.setToolTip("Klik catatan untuk melihat lokasinya di gambar")
@@ -357,17 +360,43 @@ class ReviewTab(QWidget):
         self._loading = False
 
     def activate(self):
-        """Dipanggil saat tab dibuka: segarkan daftar; bila belum ada lembar aktif,
+        """Dipanggil saat tab dibuka atau proses di latar selesai: segarkan daftar; bila belum ada lembar aktif,
         tampilkan lembar pertama yang perlu dicek."""
         self.refresh_list()
+        if self.cur is not None and self.cur["id"] not in self.ids:
+            # baca ulang menyimpan lembar sebagai baris baru (ID berganti): tetap di lembar yang sama
+            baru = next((r for r in self.db.lembar(self.event_id) if r["file"] == self.cur["file"]), None)
+            if baru is not None:
+                if self.dirty:              # isian belum disimpan tetap dipakai, disimpan ke baris barunya
+                    self.cur = baru
+                    self.shown.emit(baru["id"])
+                else:
+                    self.cur = None
+                    self.show_lembar(baru["id"])
+                return
         if self.cur is None or self.cur["id"] not in self.ids:
             self.cur = None
             if self.ids:
                 self.show_lembar(self._first_to_check() or self.ids[0])
             else:
                 self._clear()
+        elif self.dirty:
+            # ada isian yang belum disimpan: jangan muat ulang dari database (ketikan hilang diam-diam),
+            # cukup hitung ulang dengan kunci terbaru
+            self._update_kode_label()
+            self._fill_answers()
+            self._set_decision(self._dec_q)
+            self._update_status()
+            self.shown.emit(self.cur["id"])
         else:
             self.show_lembar(self.cur["id"])
+
+    def _focus_changed(self, _old, new):
+        """Kotak pilihan (jawaban per soal, urutan, kontras) memakai huruf untuk memilih isinya sendiri;
+        selama fokus di sana, huruf A-E tidak mengubah soal di kotak keputusan."""
+        on = not isinstance(new, QComboBox)
+        for sc in self._huruf:
+            sc.setEnabled(on)
 
     def _first_to_check(self):
         for i in self.ids:

@@ -193,7 +193,7 @@ class KunciDialog(QDialog):
 
     def _update_info(self):
         n = len(self.kunci)
-        empty = [str(q + 1) for q, ch in enumerate(self.kunci) if not ch]
+        empty = [str(q + 1) for q, ch in enumerate(self.kunci) if not ch or ch not in "ABCDE"]   # "?" = belum ada kunci
         diff = [str(q + 1) for q in range(min(n, len(self.original))) if self.kunci[q] != self.original[q]]
         parts = [f"{n} soal"]
         if diff:
@@ -208,7 +208,7 @@ class KunciDialog(QDialog):
         if not self.f_kode.text().strip() or not self.f_bidang.text().strip():
             QMessageBox.warning(self, "Kunci", "Kode naskah dan nama bidang wajib diisi.")
             return
-        empty = [str(q + 1) for q, ch in enumerate(self.kunci) if not ch]
+        empty = [str(q + 1) for q, ch in enumerate(self.kunci) if not ch or ch not in "ABCDE"]   # "?" = belum ada kunci
         if empty:
             QMessageBox.warning(self, "Kunci", f"Kunci soal berikut belum diisi: {', '.join(empty)}")
             return

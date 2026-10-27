@@ -45,7 +45,7 @@ def load_kunci(xlsx):
         if kode in out:
             raise ValueError(f"Kode naskah {kode} dipakai dua kali di file kunci")
         sumber = str(r[ix["File PDF"]] or "").strip() if "File PDF" in ix else ""
-        out[kode] = Soal(kode, str(r[ix["Nama Bidang"]]).strip(), kunci, sumber)
+        out[kode] = Soal(kode, str(r[ix["Nama Bidang"]] or "").strip(), kunci, sumber)
     return out
 
 

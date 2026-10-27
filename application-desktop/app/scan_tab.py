@@ -1,5 +1,7 @@
 """Tab Scan & Nilai: tambah foto LJK, proses di latar belakang, antrean lembar menurut status, dan cek manual
 lembar yang dipilih di sampingnya; ekspor Excel."""
+import html
+import os
 import shutil
 from pathlib import Path
 
@@ -53,7 +55,9 @@ class Worker(QThread):
             try:
                 if srv and srv.get("download") and not Path(path).exists():
                     SC.download(srv["download"], path)
-                rec = SV.process_photo(path, self.out_dir, kontras=self.kontras)
+                # folder gambar per nomor urut: foto bernama sama dari folder lain (Ruang1/001.jpg,
+                # Ruang2/001.jpg) tidak berbagi gambar cek; baca ulang menimpa folder lembar itu sendiri
+                rec = SV.process_photo(path, Path(self.out_dir) / f"{urutan:04d}", kontras=self.kontras)
             except SC.ServerError as e:
                 rec = {"file": str(path), "error": f"Gagal mengunduh dari server: {e}", "baca": {}, "unduh_gagal": True}
             except Exception as e:  # foto rusak dsb.: dicatat, proses lanjut
@@ -150,6 +154,7 @@ class ScanTab(QWidget):
         self.db, self.data_dir = db, data_dir
         self.event_id = None
         self.worker = None
+        self._run_event, self._run_nama, self._hilang = None, "", []
         self._pending = 0
         self._pulled = []
         self._filter = "Perlu cek"
@@ -319,7 +324,20 @@ class ScanTab(QWidget):
                                 f"Baca ulang {len(rows)} lembar yang belum dicek dengan kontras {label}?\n"
                                 "Lembar yang sudah dicek tidak diubah (bisa diproses ulang manual).") \
                 == QMessageBox.Yes:
-            self._reread(rows)
+            if not self._boleh_baca_ulang([r["id"] for r in rows]):
+                return
+            self._reread([r for r in self.db.lembar(self.event_id) if not r["dicek"]])   # mungkin baru disimpan
+
+    def _boleh_baca_ulang(self, ids):
+        """Lembar yang sedang dicek dan belum disimpan ikut dibaca ulang: tawarkan simpan dulu (Simpan/Buang/Batal),
+        supaya ketikannya tidak hilang diam-diam."""
+        cur = self.review.cur
+        if cur is None or not self.review.dirty or cur["id"] not in ids:
+            return True
+        if not self.review.confirm_leave():
+            return False
+        self.review.dirty = False           # Simpan sudah menyimpan; Buang: isian lama memang dibuang
+        return True
 
     def _out_dir(self):
         return self.data_dir / "event" / str(self.event_id)
@@ -423,8 +441,12 @@ class ScanTab(QWidget):
         i = self._pos(lembar_id)
         self.queue.blockSignals(True)
         if i:
-            self.queue.setCurrentRow(i - 1, QItemSelectionModel.ClearAndSelect)
-            self.queue.scrollToItem(self.queue.item(i - 1))
+            # klik di antrean sendiri: pilihan (Ctrl/Shift+klik) dan posisi gulir diurus Qt; menggulir di tengah
+            # klik membuat pilihan jatuh ke baris lain. Hanya perpindahan dari luar antrean (tombol, simpan
+            # lalu lanjut) yang memilih dan menggulir ke lembarnya.
+            if self.queue.currentRow() != i - 1:
+                self.queue.setCurrentRow(i - 1, QItemSelectionModel.ClearAndSelect)
+                self.queue.scrollToItem(self.queue.item(i - 1))
         else:
             self.queue.clearSelection()
         self.queue.blockSignals(False)
@@ -464,7 +486,7 @@ class ScanTab(QWidget):
         if files:
             self._start([Path(f) for f in files])
 
-    def _start(self, paths, urutan=None, srv=None):
+    def _start(self, paths, urutan=None, srv=None, hilang=()):
         if self.event_id is None or self.busy():
             return
         if urutan is None:
@@ -480,10 +502,14 @@ class ScanTab(QWidget):
                 QMessageBox.information(self, "Tambah foto", f"{skipped} foto dilewati karena sudah ada di event ini.")
         else:
             items = list(zip(urutan, paths, srv or [None] * len(paths)))
-        self._run(items)
+        self._run(items, hilang)
 
-    def _run(self, items):
+    def _run(self, items, hilang=()):
         self._pulled = []
+        self._hilang = list(hilang)
+        # hasil scan selalu masuk ke event tempat scan dimulai, walau panitia membuka event lain selama proses
+        self._run_event = self.event_id
+        self._run_nama = self.db.event(self.event_id)["nama"]
         self.worker = Worker(items, self._out_dir(), self._kontras())
         self.worker.one.connect(self._one_done)
         self.worker.progress.connect(self._progress)
@@ -494,24 +520,31 @@ class ScanTab(QWidget):
     def _one_done(self, urutan, rec):
         if rec.get("unduh_gagal"):
             return                      # tidak disimpan; dicoba lagi pada sinkron berikutnya
+        if rec.get("error") and not Path(rec["file"]).exists():
+            # foto asli hilang (dipindah / flashdisk dicabut): hasil baca lama tidak ditimpa "Gagal"
+            self._hilang.append(Path(rec["file"]).name)
+            return
         if rec.get("server_id"):
             self._pulled.append(rec["server_id"])
-        self.db.add_lembar(self.event_id, urutan, rec)
+        self.db.add_lembar(self._run_event, urutan, rec)
         self._pending += 1
         if self._pending >= 5:
             self._pending = 0
-            self.refresh()
+            if self.event_id == self._run_event:
+                self.refresh()
 
     def _progress(self, done, total, name):
         self.progress.setMaximum(total)
         self.progress.setValue(done)
-        self.progress_label.setText(f"<b>Membaca {done}/{total}</b>&nbsp;&nbsp;{name}")
+        lain = "" if self.event_id == self._run_event else f"&nbsp;&nbsp;·&nbsp;&nbsp;event {html.escape(self._run_nama)}"
+        self.progress_label.setText(f"<b>Membaca {done}/{total}</b>&nbsp;&nbsp;{html.escape(name)}{lain}")
 
     def _finished(self):
         self._set_running(False)
         self._pending = 0
         self.refresh()
         self.review.activate()          # lembar yang tampil mungkin baru saja dibaca ulang
+        self._lapor_hilang()
         if self._pulled:
             n = len(self._pulled)
             try:
@@ -539,6 +572,8 @@ class ScanTab(QWidget):
         if not ids:
             QMessageBox.information(self, "Proses ulang", "Pilih dulu lembar yang akan diproses ulang.")
             return
+        if not self._boleh_baca_ulang(ids):
+            return
         rows = [self.db.lembar_by_id(i) for i in ids]
         if any(r["dicek"] for r in rows) and QMessageBox.question(
                 self, "Proses ulang", "Sebagian lembar sudah dicek manual. Hasil cek akan hilang. Lanjutkan?"
@@ -547,9 +582,26 @@ class ScanTab(QWidget):
         self._reread(rows)
 
     def _reread(self, rows):
-        """Baca ulang lembar yang sudah ada (urutan & data server tetap)."""
-        srv = [{"server_id": r["server_id"], "server": SV.server_info(r)} if r["server_id"] else None for r in rows]
-        self._start([Path(r["file"]) for r in rows], urutan=[r["urutan"] for r in rows], srv=srv)
+        """Baca ulang lembar yang sudah ada (urutan & data server tetap). Lembar yang foto aslinya sudah tidak ada
+        dilewati: hasil bacanya tetap, tidak berubah menjadi "Gagal"."""
+        ada = [r for r in rows if Path(r["file"]).exists()]
+        hilang = [Path(r["file"]).name for r in rows if not Path(r["file"]).exists()]
+        if not ada:
+            self._hilang = hilang
+            self._lapor_hilang()
+            return
+        srv = [{"server_id": r["server_id"], "server": SV.server_info(r)} if r["server_id"] else None for r in ada]
+        self._start([Path(r["file"]) for r in ada], urutan=[r["urutan"] for r in ada], srv=srv, hilang=hilang)
+
+    def _lapor_hilang(self):
+        if not self._hilang:
+            return
+        n = len(self._hilang)
+        contoh = ", ".join(self._hilang[:5]) + (f", dan {n - 5} lainnya" if n > 5 else "")
+        QMessageBox.warning(self, "Foto asli tidak ditemukan",
+                            f"{n} foto asli tidak ditemukan lagi (mungkin dipindah, diganti nama, atau flashdisk-nya "
+                            f"dicabut), jadi tidak dibaca:\n{contoh}\n\nHasil baca lembar itu yang sudah ada tidak diubah.")
+        self._hilang = []
 
     def _delete(self):
         ids = self._selected_ids()
@@ -561,10 +613,15 @@ class ScanTab(QWidget):
             return
         if self.review.cur is not None and self.review.cur["id"] in ids:
             self.review.dirty = False   # lembar yang sedang dibuka ikut dihapus: perubahannya tidak ditanyakan
+        # lembar lama (sebelum folder per nomor urut) bisa berbagi folder gambar dengan foto bernama sama
+        dipakai = {Path(r["gambar"]).parent for r in self.db.lembar(self.event_id) if r["gambar"] and r["id"] not in ids}
         for i in ids:
             r = self.db.lembar_by_id(i)
-            if r and r["gambar"]:
-                shutil.rmtree(Path(r["gambar"]).parent, ignore_errors=True)
+            if r and r["gambar"] and Path(r["gambar"]).parent not in dipakai:
+                d = Path(r["gambar"]).parent
+                shutil.rmtree(d, ignore_errors=True)
+                if d.parent != self._out_dir() and d.parent.is_dir() and not any(d.parent.iterdir()):
+                    d.parent.rmdir()            # folder nomor urut yang kini kosong
         self.db.delete_lembar(ids)
         self.refresh()
         self.review.activate()
@@ -633,6 +690,11 @@ class ScanTab(QWidget):
         cek = sum(1 for v in views if v.status == "Perlu cek" and v.skor is not None)
         nokode = sum(1 for v in views if v.status != "Gagal" and v.skor is None)
         gagal = sum(1 for v in views if v.status == "Gagal")
+        if nokode + gagal == len(views):
+            sebab = ("kunci jawaban event ini belum disimpan (tab Kunci jawaban)" if not self.db.naskah(self.event_id)
+                     else "semua lembar gagal dibaca atau kode naskahnya belum terdaftar di kunci")
+            QMessageBox.information(self, "Ekspor", f"Belum ada lembar yang bisa diekspor: {sebab}.")
+            return
         if cek or nokode or gagal:
             parts = []
             if cek:
@@ -648,10 +710,18 @@ class ScanTab(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Simpan Daftar Nilai", default, "Excel (*.xlsx)")
         if not path:
             return
+        # tulis ke file sementara dulu, baru menggantikan file tujuan: bila gagal, Daftar Nilai lama tetap utuh
+        tmp = Path(path).with_name(f"~{Path(path).stem}.ekspor.xlsx")
         try:
-            n, _skipped = SV.export_event(self.db, self.event_id, path)
+            n, _skipped = SV.export_event(self.db, self.event_id, str(tmp))
+            os.replace(tmp, path)
         except PermissionError:
+            tmp.unlink(missing_ok=True)
             QMessageBox.warning(self, "Ekspor", "File tidak bisa ditulis. Tutup dulu file itu di Excel.")
+            return
+        except Exception as e:  # noqa: BLE001  ekspor gagal karena hal lain: beri tahu, file lama tidak disentuh
+            tmp.unlink(missing_ok=True)
+            QMessageBox.warning(self, "Ekspor", f"Ekspor gagal, file lama tidak diubah.\n\n{e}")
             return
         if QMessageBox.question(self, "Ekspor", f"{n} lembar tersimpan di:\n{path}\n\nBuka file sekarang?") \
                 == QMessageBox.Yes:

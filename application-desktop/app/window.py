@@ -3,7 +3,7 @@ tab Kunci / Scan & Nilai (antrean + cek manual) / Latih di kanan."""
 import html
 import shutil
 
-from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QPainter, QPainterPath, QShortcut
 from PySide6.QtWidgets import (QApplication, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QMessageBox, QStackedWidget, QStyle,
@@ -254,7 +254,7 @@ class MainWindow(QMainWindow):
         self.kunci.changed.connect(self.scan.refresh)
         self.scan.linked.connect(self._event_linked)
         self.scan.summary.connect(self._on_summary)
-        self.scan.running.connect(lambda on: self.btn_sync.setEnabled(not on and self.event_id is not None))
+        self.scan.running.connect(self._running_changed)
 
         self.empty = EmptyState("calendar", "Belum ada event",
                                 "Buat event untuk mulai memasukkan kunci jawaban dan memindai LJK.",
@@ -304,6 +304,7 @@ class MainWindow(QMainWindow):
             self.logo.setPixmap(icons.pixmap("scan", theme.c("on_accent"), 16, dpr))
             self.logo.setStyleSheet(f"background: {theme.c('accent')}; border-radius: 6px;")
         self.events.viewport().update()
+        self._update_header()                           # warna teks tebal di subjudul ikut tema baru
         theme.refresh_all()
 
     def _logo_pixmap(self, dpr):
@@ -345,15 +346,43 @@ class MainWindow(QMainWindow):
             self._set_event(None)
 
     def _event_selected(self, cur, _prev):
-        self._set_event(cur.data(Qt.UserRole) if cur else None)
+        eid = cur.data(Qt.UserRole) if cur else None
+        if eid is not None and eid == self.event_id:
+            # daftar dimuat ulang dengan event yang sama (sinkron server, ubah event): jangan muat ulang tab,
+            # supaya kunci / cek manual yang belum disimpan tidak hilang
+            self._update_header()
+            self.kunci.show_server_bidang()
+            return
+        if self.event_id is not None and not self._boleh_tinggalkan():
+            # batal pindah: sorotan kembali ke event ini (setelah klik selesai diproses daftar)
+            QTimer.singleShot(0, lambda keep=self.event_id: self._sorot_event(keep))
+            return
+        self._set_event(eid)
+
+    def _boleh_tinggalkan(self):
+        """Sebelum meninggalkan event: tawarkan simpan kunci jawaban & cek manual yang belum disimpan."""
+        return self.kunci.ask_save() and self.scan.review.confirm_leave()
+
+    def _sorot_event(self, event_id):
+        self.events.blockSignals(True)
+        for i in range(self.events.count()):
+            if self.events.item(i).data(Qt.UserRole) == event_id:
+                self.events.setCurrentRow(i)
+        self.events.blockSignals(False)
+
+    def _running_changed(self, on):
+        has = self.event_id is not None
+        self.btn_sync.setEnabled(not on and has)
+        self.act_delete.setEnabled(not on and has)      # hapus event saat scan berjalan: hasil scan kehilangan tempat
 
     def _set_event(self, event_id):
         self.event_id = event_id
         self._summary = None
         has = event_id is not None
         self.stack.setCurrentWidget(self.tabs if has else self.empty)
-        for a in (self.act_push, self.act_edit, self.act_delete):
+        for a in (self.act_push, self.act_edit):
             a.setEnabled(has)
+        self.act_delete.setEnabled(has and not self.scan.busy())
         for w in (self.scan.kontras, self.scan.btn_add, self.scan.btn_export):
             w.setVisible(has)
         self.btn_sync.setEnabled(has and not self.scan.busy())
@@ -498,7 +527,7 @@ class MainWindow(QMainWindow):
             self._load_events(select=self.event_id)
 
     def _delete_event(self):
-        if self.event_id is None:
+        if self.event_id is None or self.scan.busy():
             return
         ev = self.db.event(self.event_id)
         n = len(self.db.lembar(self.event_id))
@@ -508,6 +537,8 @@ class MainWindow(QMainWindow):
             return
         shutil.rmtree(self.data_dir / "event" / str(self.event_id), ignore_errors=True)
         self.db.delete_event(self.event_id)
+        self.kunci._set_dirty(False)        # isian event yang dihapus memang ikut dibuang: jangan tawarkan simpan
+        self.scan.review.dirty = False
         self._load_events()
 
     # ---- tab
@@ -565,7 +596,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "LJK Reader", "Tunggu proses scan selesai dulu.")
             e.ignore()
             return
-        if not self.scan.review.confirm_leave():
+        if not self._boleh_tinggalkan():
             e.ignore()
             return
         super().closeEvent(e)

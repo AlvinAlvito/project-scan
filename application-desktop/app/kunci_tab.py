@@ -16,7 +16,12 @@ from app.widgets import EmptyState, ToolbarFit, badge, divider, setup_table, too
 from ljk import nilai as NI
 
 COL_KODE, COL_BIDANG, COL_JUMLAH, COL_KUNCI, COL_CATATAN = range(5)
-LIHAT, ISI = "Lihat kunci jawaban", "Isi kunci jawaban"
+LIHAT, ISI, KURANG = "Lihat kunci jawaban", "Isi kunci jawaban", "Kunci belum lengkap"
+
+
+def bukan_kunci(kunci):
+    """Nomor soal (mulai 1) yang isinya bukan A-E, mis. "?" dari PDF yang kuncinya tidak ditemukan."""
+    return [q + 1 for q, ch in enumerate(kunci) if ch not in "ABCDE"]
 
 
 class KunciLinkDelegate(QStyledItemDelegate):
@@ -36,21 +41,26 @@ class KunciLinkDelegate(QStyledItemDelegate):
         opt.text = ""                                   # latar, pilihan, dan garis baris tetap dari gaya tabel
         w = opt.widget
         (w.style() if w else QApplication.style()).drawControl(QStyle.CE_ItemViewItem, opt, p, w)
-        ada = bool((index.data() or "").strip())
+        kunci = (index.data() or "").strip()
+        if not kunci:
+            ikon, warna, teks = "pencil", theme.c("muted"), ISI
+        elif bukan_kunci(kunci):        # isi kunci tersembunyi: soal tanpa kunci harus tetap kelihatan
+            ikon, warna, teks = "alert", theme.tone_hex("warn")[1], KURANG
+        else:
+            ikon, warna, teks = "eye", None, LIHAT
         r = option.rect.adjusted(self.PAD, 0, -self.PAD, 0)
-        pm = icons.pixmap("eye" if ada else "pencil", theme.c("icon" if ada else "muted"), self.ICON,
-                          w.devicePixelRatioF() if w else 2.0)
+        pm = icons.pixmap(ikon, warna or theme.c("icon"), self.ICON, w.devicePixelRatioF() if w else 2.0)
         p.save()
         p.drawPixmap(r.left(), r.center().y() - self.ICON // 2 + 1, pm)
         p.setFont(self._font(option, bool(option.state & QStyle.State_MouseOver)))
-        p.setPen(QColor(theme.c("text" if ada else "muted")))
+        p.setPen(QColor(warna or theme.c("text")))
         tr = r.adjusted(self.ICON + self.GAP, 0, 0, 0)
-        p.drawText(tr, Qt.AlignLeft | Qt.AlignVCenter,
-                   QFontMetrics(p.font()).elidedText(LIHAT if ada else ISI, Qt.ElideRight, tr.width()))
+        p.drawText(tr, Qt.AlignLeft | Qt.AlignVCenter, QFontMetrics(p.font()).elidedText(teks, Qt.ElideRight, tr.width()))
         p.restore()
 
     def sizeHint(self, option, index):
-        lebar = QFontMetrics(self._font(option)).horizontalAdvance(LIHAT)
+        fm = QFontMetrics(self._font(option))
+        lebar = max(fm.horizontalAdvance(t) for t in (LIHAT, ISI, KURANG))
         return QSize(2 * self.PAD + self.ICON + self.GAP + lebar + 4, super().sizeHint(option, index).height())
 
 
@@ -216,6 +226,17 @@ class KunciTab(QWidget):
     def confirm_leave(self):
         return not self._dirty
 
+    def ask_save(self):
+        """Kunci belum disimpan saat event ditinggalkan / aplikasi ditutup: Simpan / Buang / Batal.
+        True = boleh lanjut."""
+        if not self._dirty or self.event_id is None:
+            return True
+        r = QMessageBox.question(self, "Kunci jawaban", "Kunci jawaban event ini belum disimpan. Simpan sekarang?",
+                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        if r == QMessageBox.Save:
+            return self.save()
+        return r == QMessageBox.Discard
+
     def _rows(self):
         out = []
         for r in range(self.table.rowCount()):
@@ -226,8 +247,9 @@ class KunciTab(QWidget):
         return out
 
     def save(self):
+        """Simpan kunci; False bila belum bisa disimpan (pesan kesalahan sudah ditampilkan)."""
         if self.event_id is None:
-            return
+            return False
         errors, seen, soal = [], set(), []
         for i, (kode, bidang, kunci, sumber) in enumerate(self._rows(), 1):
             if not (kode or bidang or kunci):
@@ -242,15 +264,20 @@ class KunciTab(QWidget):
                 errors.append(f"Baris {i}: kunci kosong")
             elif len(kunci) > 180:
                 errors.append(f"Baris {i}: kunci lebih dari 180 soal")
+            elif bad := bukan_kunci(kunci):
+                nomor = ", ".join(map(str, bad[:10])) + (f" (dan {len(bad) - 10} lainnya)" if len(bad) > 10 else "")
+                errors.append(f"Baris {i} ({kode or bidang}): soal {nomor} belum berisi kunci A–E. "
+                              "Buka \"Kunci belum lengkap\" lalu pilih kuncinya.")
             seen.add(kode)
             soal.append(NI.Soal(kode, bidang, kunci, sumber))
         if errors:
             QMessageBox.warning(self, "Kunci belum bisa disimpan", "\n".join(errors))
-            return
+            return False
         self.db.set_naskah(self.event_id, soal)
         self.load(self.event_id)          # muat ulang, urut menurut kode naskah
         self.changed.emit()
         QMessageBox.information(self, "Kunci", f"{len(soal)} kode naskah tersimpan.")
+        return True
 
     # ---- editor per nomor
     def _cell_clicked(self, r, c):
@@ -358,14 +385,15 @@ class KunciTab(QWidget):
         existing = {r[0]: i for i, r in enumerate(self._rows())}
         self.table.blockSignals(True)
         for s in soal.values():
+            kunci = re.sub(r"[\s,;|/]", "", s.kunci)     # pemisah yang diketik di Excel ("A, B, C") bukan kunci
             if s.kode in existing:
                 r = existing[s.kode]
                 self.table.item(r, COL_BIDANG).setText(s.bidang)
-                self.table.item(r, COL_KUNCI).setText(s.kunci)
+                self.table.item(r, COL_KUNCI).setText(kunci)
                 self.table.item(r, COL_KUNCI).setData(Qt.UserRole, s.sumber)
-                self.table.item(r, COL_JUMLAH).setText(str(len(s.kunci)))
+                self.table.item(r, COL_JUMLAH).setText(str(len(kunci)))
             else:
-                self._append(s.kode, s.bidang, s.kunci, sumber=s.sumber)
+                self._append(s.kode, s.bidang, kunci, sumber=s.sumber)
         self.table.blockSignals(False)
         self._set_dirty(True)
         QMessageBox.information(self, "Impor Excel", f"{len(soal)} kode naskah dimuat. Klik Simpan kunci.")
