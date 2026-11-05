@@ -14,11 +14,10 @@ export const WEIGHTS = { tajam: 30, terang: 25, silau: 20, bayangan: 15, stabil:
 // Ketajaman = variansi Laplacian / kontras^2 pada potongan kertas yang diskalakan ke ukuran baku
 // (lebar antar-sudut 900 px) dengan pengecilan bertahap, sehingga tidak tertipu aliasing dan
 // sebanding antar HP. Dikalibrasi dari foto asli: tajam ~315-360, foto buram yang lolos dulu ~28.
-// Kamera live (video) sedikit lebih lembut dari foto, jadi ambangnya lebih longgar.
-export const SHARP = {
-  live: { min: 25, bagus: 80 },
-  foto: { min: 40, bagus: 120 },
-};
+// Foto HP sungguhan: 254-334. Gambar yang dikirim adalah potongan video yang sama dengan tampilan
+// live, jadi live & foto memakai ambang yang sama: yang dinyatakan siap pasti lolos saat diambil.
+export const SHARP = { min: 40, bagus: 120 };
+export const READY_SCORE = 85;   // skor minimal untuk siap
 // Ambang (dikalibrasi dari foto LJK asli di lebar 480 px)
 export const LIMITS = {
   terangMin: 70, terangBagus: 130, terangLebih: 248,     // tingkat kertas (persentil 75 luminans)
@@ -27,7 +26,7 @@ export const LIMITS = {
   bayanganMin: 0.55, bayanganBagus: 0.82,                // rasio sel tergelap / terterang
   geserBagus: 0.004, geserMax: 0.02,                     // perpindahan sudut antar frame / diagonal
   luasMin: 0.40,                                         // luas 4 sudut / luas layar (kamera live)
-  lebarFotoMin: 700,                                     // foto: lebar antar-sudut minimal (piksel asli); mesin terbukti akurat sampai ~670
+  lebarFotoMin: 640,                                     // lebar antar-sudut minimal (piksel asli); mesin terbukti akurat di ~640
   tepi: 0.012,                                           // jarak minimum sudut ke tepi gambar
   miringMax: 15,                                         // derajat
   perspektifMax: 1.3,                                    // rasio sisi berhadapan
@@ -329,12 +328,14 @@ export function analyze(img, prev = null, opts = {}) {
 function finish(r) {
   let score = 0;
   for (const k in WEIGHTS) score += WEIGHTS[k] * r.sub[k];
+  const gagal = Object.keys(r.gates).filter(k => !r.gates[k]);
   if (!r.gates.sudut) score = Math.min(score * 0.45, 40);
-  else if (!Object.values(r.gates).every(Boolean)) score = Math.min(score * 0.6, 59);
+  else if (gagal.length === 1 && gagal[0] === "jarak") score = Math.min(score, 82);   // hanya kurang pas
+  else if (gagal.length) score = Math.min(score * 0.6, 59);
   r.score = Math.round(score);
   r.tip = pickTip(r.gates, r.sub, r.metrics.terang);
   // siap hanya bila semua syarat wajib terpenuhi DAN fokus cukup (buram tidak boleh lolos walau nilai lain bagus)
-  r.ready = Object.values(r.gates).every(Boolean) && r.score >= 90 && r.sub.tajam >= 0.6;
+  r.ready = !gagal.length && r.score >= READY_SCORE && r.sub.tajam >= 0.6;
   return r;
 }
 
@@ -383,7 +384,6 @@ export function measureSharpness(source, r, mode = "live") {
     s1 += lap; s2 += lap * lap; m++;
   }
   const v = (s2 / m - (s1 / m) ** 2) / (rng * rng) * 1000;
-  const lim = SHARP[mode] || SHARP.live;
   if (mode === "foto") {
     // foto: yang menentukan terbaca atau tidak adalah resolusi kertas, bukan porsi bingkai
     r.metrics.lebar_px = Math.round(lebar);
@@ -391,7 +391,7 @@ export function measureSharpness(source, r, mode = "live") {
   }
   r.metrics.tajam = Math.round(v);
   r.metrics.tajam_mode = mode;
-  r.sub.tajam = ramp(v, lim.min, lim.bagus);
+  r.sub.tajam = ramp(v, SHARP.min, SHARP.bagus);
   return finish(r);
 }
 
@@ -401,7 +401,7 @@ function pickTip(g, s, terang) {
   if (terang > LIMITS.terangLebih)
     return { key: "terang", title: "Terlalu terang", text: "Hindari cahaya langsung yang terlalu kuat." };
   if (!g.sudut && s.tajam < 0.3) return { key: "tajam", title: "Gambar buram", text: "Tahan HP tetap diam, ketuk layar untuk fokus." };
-  if (!g.sudut) return { key: "sudut", title: "Arahkan LJK ke bingkai", text: "Letakkan LJK di dalam bingkai sampai 4 kotak hitam di sudutnya terlihat." };
+  if (!g.sudut) return { key: "sudut", title: "Arahkan LJK ke bingkai", text: "Letakkan kertas LJK di dalam bingkai." };
   if (!g.utuh) return { key: "utuh", title: "Terlalu dekat", text: "Mundurkan HP sedikit; kotak hitam di sudut jangan terpotong." };
   if (!g.jarak) return { key: "jarak", title: "Kertas terlalu jauh", text: "Dekatkan HP sampai kertas memenuhi bingkai." };
   if (!g.lurus) return { key: "lurus", title: "Kertas miring", text: "Putar HP sampai tepi kertas lurus dengan bingkai." };
@@ -417,31 +417,34 @@ function pickTip(g, s, terang) {
 
 export const CHIPS = [["terang", "Cahaya"], ["tajam", "Fokus"], ["sudut", "4 sudut"], ["jarak", "Pas bingkai"], ["silau", "Silau"]];
 
-// Bingkai panduan di layar (seperti scan KTP): lebar/tinggi = jarak antar kotak sudut LJK.
-export const FRAME_ASPECT = 0.70;
-export const FIT_TOL = 0.07;     // tiap kotak sudut maks 7% lebar bingkai dari sudut bingkai
+// Bingkai panduan di layar (seperti scan KTP) mewakili TEPI KERTAS. Kotak hitam LJK terletak agak ke
+// dalam dari tepi kertas (jarak antar-kotak ~87% lebar kertas), jadi kertas yang pas bingkai lolos.
+export const FRAME_ASPECT = 0.71;
+export const FIT = { tepi: 0.03, minUkuran: 0.62 };   // boleh keluar bingkai 3%; jarak antar-kotak min. 62% bingkai
 
 /**
- * Cocokkan 4 kotak sudut LJK dengan bingkai panduan f = {x0, y0, x1, y1} (koordinat analisis).
- * Syarat "jarak" diganti "pas bingkai", dengan arahan dekat/mundur/geser. Dipanggil paling akhir.
+ * Cek LJK terhadap bingkai panduan f = {x0, y0, x1, y1} (koordinat analisis). Syarat "jarak" menjadi:
+ * 4 kotak hitam ada di dalam bingkai, kertas cukup besar, dan resolusinya cukup untuk dibaca.
+ * pxPerUnit: piksel video per satuan analisis. Dipanggil paling akhir.
  */
-export function fitFrame(r, f) {
+export function fitFrame(r, f, pxPerUnit = 1) {
   if (!r.corners) return r;
-  const c = r.corners, fw = f.x1 - f.x0;
-  const target = { tl: { x: f.x0, y: f.y0 }, tr: { x: f.x1, y: f.y0 }, bl: { x: f.x0, y: f.y1 }, br: { x: f.x1, y: f.y1 } };
-  const err = Math.max(...["tl", "tr", "bl", "br"].map(k => dist(c[k], target[k]))) / fw;
-  const scale = ((dist(c.tl, c.tr) + dist(c.bl, c.br)) / 2) / fw;
-  const dx = ((c.tl.x + c.tr.x + c.bl.x + c.br.x) / 4 - (f.x0 + f.x1) / 2) / fw;
-  const dy = ((c.tl.y + c.tr.y + c.bl.y + c.br.y) / 4 - (f.y0 + f.y1) / 2) / fw;
-  r.metrics.pas = +err.toFixed(3);
-  r.gates.jarak = err <= FIT_TOL;
+  const c = r.corners, pts = [c.tl, c.tr, c.bl, c.br];
+  const fw = f.x1 - f.x0, fh = f.y1 - f.y0, tol = fw * FIT.tepi;
+  const lebar = (dist(c.tl, c.tr) + dist(c.bl, c.br)) / 2, tinggi = (dist(c.tl, c.bl) + dist(c.tr, c.br)) / 2;
+  const keluar = { kiri: pts.some(p => p.x < f.x0 - tol), kanan: pts.some(p => p.x > f.x1 + tol),
+    atas: pts.some(p => p.y < f.y0 - tol), bawah: pts.some(p => p.y > f.y1 + tol) };
+  const kecil = lebar / fw < FIT.minUkuran || tinggi / fh < FIT.minUkuran || lebar * pxPerUnit < LIMITS.lebarFotoMin;
+  r.metrics.ukuran = +(lebar / fw).toFixed(2);
+  r.gates.jarak = !kecil && !Object.values(keluar).some(Boolean);
   finish(r);
-  if (r.gates.sudut && r.gates.utuh && !r.gates.jarak && r.tip.key === "jarak") {
-    let text;
-    if (scale < 0.93) text = "Dekatkan HP sampai 4 kotak hitam pas di sudut bingkai.";
-    else if (scale > 1.07) text = "Mundurkan HP sedikit, LJK lebih besar dari bingkai.";
-    else if (Math.abs(dx) >= Math.abs(dy)) text = dx > 0 ? "Geser HP sedikit ke kanan." : "Geser HP sedikit ke kiri.";
-    else text = dy > 0 ? "Geser HP sedikit ke bawah." : "Geser HP sedikit ke atas.";
+  if (r.gates.utuh && !r.gates.jarak && r.tip.key === "jarak") {
+    let text = "Dekatkan HP sampai kertas memenuhi bingkai.";
+    if ((keluar.kiri && keluar.kanan) || (keluar.atas && keluar.bawah)) text = "Mundurkan HP sedikit sampai kertas masuk bingkai.";
+    else if (keluar.kiri) text = "Geser HP sedikit ke kiri.";
+    else if (keluar.kanan) text = "Geser HP sedikit ke kanan.";
+    else if (keluar.atas) text = "Geser HP sedikit ke atas.";
+    else if (keluar.bawah) text = "Geser HP sedikit ke bawah.";
     r.tip = { key: "jarak", title: "Pas-kan LJK ke bingkai", text };
   }
   return r;

@@ -1,7 +1,7 @@
 // Web HP admin daerah: pilih kompetisi -> kamera dengan pemandu kualitas -> kirim -> konfirmasi hasil baca.
 import { api, esc, fileUrl, icon, logout, modal, pctBadge, requireLogin, statusBadge, toast,
   toggleTheme, currentTheme, confirmBox, fmtDate } from "/static/js/common.js";
-import { analyze, grab, measureSharpness, fitFrame, FRAME_ASPECT, ANALYSIS_WIDTH, CHIPS, chipState } from "./quality.js";
+import { analyze, grab, measureSharpness, fitFrame, FRAME_ASPECT, ANALYSIS_WIDTH, READY_SCORE, CHIPS, chipState } from "./quality.js";
 import { queue, flush } from "./queue.js";
 
 const $ = s => document.querySelector(s);
@@ -115,14 +115,18 @@ function tick() {
   const img = grab(video, work);
   if (!img) return;
   const L = frameLayout();
-  const r = fitFrame(measureSharpness(video, analyze(img, state.prev), "live"), L.analysis);
+  const r = fitFrame(measureSharpness(video, analyze(img, state.prev), "live"), L.analysis, video.videoWidth / ANALYSIS_WIDTH);
   state.prev = r;
   state.smooth = state.smooth ? Math.round(state.smooth * 0.55 + r.score * 0.45) : r.score;
   renderGuide(r);
-  const ready = r.ready && state.smooth >= 90;
-  $("#b-shutter").disabled = !ready;
   const now = performance.now();
-  if (ready) { if (!state.readySince) state.readySince = now; } else state.readySince = 0;
+  // goyangan sesaat tidak mengulang hitungan: status siap baru hilang setelah 0,6 detik tidak siap
+  if (r.ready && state.smooth >= READY_SCORE) {
+    if (!state.readySince) state.readySince = now;
+    state.lastReady = now;
+  } else if (now - (state.lastReady || 0) > 600) state.readySince = 0;
+  const ready = !!state.readySince;
+  $("#b-shutter").disabled = !ready;
   const hold = 900, prog = ready && $("#c-auto").checked ? Math.min(1, (now - state.readySince) / hold) : 0;
   $("#shutter-ring").style.strokeDashoffset = String(226.2 * (1 - prog));
   if (prog >= 1) takePhoto(r);
@@ -132,7 +136,7 @@ function renderGuide(r) {
   const p = state.smooth;
   const sc = $("#score");
   sc.style.setProperty("--p", p);
-  sc.style.setProperty("--c", p >= 90 ? "#4ade80" : p >= 60 ? "#fbbf24" : "#f87171");
+  sc.style.setProperty("--c", p >= READY_SCORE ? "#4ade80" : p >= 60 ? "#fbbf24" : "#f87171");
   $("#score-num").textContent = p + "%";
   $("#chips").innerHTML = CHIPS.map(([k, t]) => `<span class="chip ${chipState(r, k) ? "y" : ""}">${t}</span>`).join("");
   const tip = $("#tip");
@@ -180,8 +184,8 @@ function frameLayout() {
   const s = Math.min(cw / vw, ch / vh), ox = (cw - vw * s) / 2, oy = (ch - vh * s) / 2;
   const top = Math.max(oy, document.querySelector(".cam-top").offsetHeight) + 8;
   const bottom = Math.min(oy + vh * s, ch - document.querySelector(".cam-bottom").offsetHeight + 24) - 8;
-  let fh = Math.max(120, (bottom - top) * 0.96), fw = fh * FRAME_ASPECT;
-  const maxW = vw * s * 0.86;     // sisakan tepi gelap di kiri-kanan supaya bingkai jelas terlihat
+  let fh = Math.max(120, bottom - top), fw = fh * FRAME_ASPECT;
+  const maxW = vw * s * 0.92;     // sisakan tepi gelap di kiri-kanan supaya bingkai jelas terlihat
   if (fw > maxW) { fw = maxW; fh = fw / FRAME_ASPECT; }
   const fx = ox + (vw * s - fw) / 2, fy = top + Math.max(0, (bottom - top - fh) / 2);
   const v = { x0: (fx - ox) / s, y0: (fy - oy) / s, x1: (fx + fw - ox) / s, y1: (fy + fh - oy) / s };   // px video
