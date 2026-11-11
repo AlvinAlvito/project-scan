@@ -82,9 +82,13 @@ class KeyBlock(QTableWidget):
 
 
 class KunciDialog(QDialog):
+    """kode=None: tanpa kolom kode naskah (pustaka paket kunci: kode naskah diatur terpisah per mata pelajaran)."""
+
     def __init__(self, parent, kode, bidang, kunci, sumber="", jumlah=0):
         super().__init__(parent)
-        self.setWindowTitle(f"Kunci Jawaban - {bidang or 'bidang baru'}")
+        self.pakai_kode = kode is not None
+        label = "bidang" if self.pakai_kode else "mata pelajaran"
+        self.setWindowTitle(f"Kunci Jawaban - {bidang or label + ' baru'}")
         self.original = kunci
         self.kunci = list(kunci) or [""] * jumlah      # bidang baru dari server: nomor kosong sejumlah soal
         self.sumber = sumber
@@ -93,19 +97,20 @@ class KunciDialog(QDialog):
         v = QVBoxLayout(self)
         v.setContentsMargins(24, 22, 24, 20)
         v.setSpacing(14)
-        title = QLabel(f"Kunci jawaban · {bidang}" if bidang else "Bidang baru")
+        title = QLabel(f"Kunci jawaban · {bidang}" if bidang else label.capitalize() + " baru")
         title.setProperty("role", "title")
         v.addWidget(title)
         form = QFormLayout()
         form.setSpacing(10)
-        self.f_kode = QLineEdit(kode)
+        self.f_kode = QLineEdit(kode or "")
         self.f_bidang = QLineEdit(bidang)
         self.f_jumlah = QSpinBox()
         self.f_jumlah.setRange(1, 180)
         self.f_jumlah.setValue(max(len(self.kunci), 1))
         self.f_jumlah.valueChanged.connect(self._resize)
-        form.addRow("Kode naskah", self.f_kode)
-        form.addRow("Nama bidang", self.f_bidang)
+        if self.pakai_kode:
+            form.addRow("Kode naskah", self.f_kode)
+        form.addRow("Nama bidang" if self.pakai_kode else "Mata pelajaran", self.f_bidang)
         form.addRow("Jumlah soal", self.f_jumlah)
         self.f_text = QLineEdit(kunci)
         self.f_text.setFont(theme.mono())
@@ -205,7 +210,10 @@ class KunciDialog(QDialog):
         self.info.setText("  |  ".join(parts))
 
     def _ok(self):
-        if not self.f_kode.text().strip() or not self.f_bidang.text().strip():
+        if not self.pakai_kode and not self.f_bidang.text().strip():
+            QMessageBox.warning(self, "Kunci", "Nama mata pelajaran wajib diisi.")
+            return
+        if self.pakai_kode and (not self.f_kode.text().strip() or not self.f_bidang.text().strip()):
             QMessageBox.warning(self, "Kunci", "Kode naskah dan nama bidang wajib diisi.")
             return
         empty = [str(q + 1) for q, ch in enumerate(self.kunci) if not ch or ch not in "ABCDE"]   # "?" = belum ada kunci

@@ -1,399 +1,228 @@
-"""Tab 1: kunci jawaban per kode naskah untuk event yang dipilih."""
-import re
-from pathlib import Path
+"""Tab Kunci jawaban event: paket kunci yang dipakai event ini dan kode naskah di dalamnya.
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics
-from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-                               QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+Kunci jawaban tidak lagi diisi per event, tetapi di pustaka paket kunci (menu Kunci jawaban di sidebar,
+app/paket_page.py) supaya satu paket bisa dipakai banyak event. Di sini panitia memilih/mengganti paket dan
+melihat kode naskah mana yang sudah dinilai. Event lama yang belum memilih paket masih memakai kunci yang
+tersimpan langsung di event (ditampilkan apa adanya sampai paket dipilih)."""
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QHeaderView, QLabel, QStackedWidget, QTableWidget, QVBoxLayout,
+                               QWidget)
 
-from ljk import kunci as KU
-from app import icons, theme
+from app import theme
 from app.colors import paint
-from app.kunci_dialog import KunciDialog
-from app.widgets import EmptyState, ToolbarFit, badge, divider, setup_table, toolbar
-from ljk import nilai as NI
-
-COL_KODE, COL_BIDANG, COL_JUMLAH, COL_KUNCI, COL_CATATAN = range(5)
-LIHAT, ISI, KURANG = "Lihat kunci jawaban", "Isi kunci jawaban", "Kunci belum lengkap"
-
-
-def bukan_kunci(kunci):
-    """Nomor soal (mulai 1) yang isinya bukan A-E, mis. "?" dari PDF yang kuncinya tidak ditemukan."""
-    return [q + 1 for q, ch in enumerate(kunci) if ch not in "ABCDE"]
-
-
-class KunciLinkDelegate(QStyledItemDelegate):
-    """Kolom Kunci tidak memperlihatkan isi kunci, hanya tautan "Lihat kunci jawaban" yang membuka editor
-    per nomor. Isi kunci tetap disimpan sebagai teks sel (dipakai simpan, impor, dan editor)."""
-    PAD, ICON, GAP = 10, 16, 8
-
-    def _font(self, option, hover=False):
-        f = QFont(option.widget.font() if option.widget else option.font)
-        f.setWeight(QFont.Medium)
-        f.setUnderline(hover)
-        return f
-
-    def paint(self, p, option, index):
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        opt.text = ""                                   # latar, pilihan, dan garis baris tetap dari gaya tabel
-        w = opt.widget
-        (w.style() if w else QApplication.style()).drawControl(QStyle.CE_ItemViewItem, opt, p, w)
-        kunci = (index.data() or "").strip()
-        if not kunci:
-            ikon, warna, teks = "pencil", theme.c("muted"), ISI
-        elif bukan_kunci(kunci):        # isi kunci tersembunyi: soal tanpa kunci harus tetap kelihatan
-            ikon, warna, teks = "alert", theme.tone_hex("warn")[1], KURANG
-        else:
-            ikon, warna, teks = "eye", None, LIHAT
-        r = option.rect.adjusted(self.PAD, 0, -self.PAD, 0)
-        pm = icons.pixmap(ikon, warna or theme.c("icon"), self.ICON, w.devicePixelRatioF() if w else 2.0)
-        p.save()
-        p.drawPixmap(r.left(), r.center().y() - self.ICON // 2 + 1, pm)
-        p.setFont(self._font(option, bool(option.state & QStyle.State_MouseOver)))
-        p.setPen(QColor(warna or theme.c("text")))
-        tr = r.adjusted(self.ICON + self.GAP, 0, 0, 0)
-        p.drawText(tr, Qt.AlignLeft | Qt.AlignVCenter, QFontMetrics(p.font()).elidedText(teks, Qt.ElideRight, tr.width()))
-        p.restore()
-
-    def sizeHint(self, option, index):
-        fm = QFontMetrics(self._font(option))
-        lebar = max(fm.horizontalAdvance(t) for t in (LIHAT, ISI, KURANG))
-        return QSize(2 * self.PAD + self.ICON + self.GAP + lebar + 4, super().sizeHint(option, index).height())
+from app.paket_page import _item, kode_lembar, nomor_tanpa_kunci, pilih_paket, ringkas_kode
+from app.widgets import EmptyState, setup_table
+from ljk.db import kode_sort, kunci_lengkap
 
 
 class KunciTab(QWidget):
-    changed = Signal()
+    changed = Signal()              # paket event diganti: nilai lembar dihitung ulang
+    buka_paket = Signal(object)     # minta jendela membuka menu Kunci jawaban (id paket, atau None)
 
     def __init__(self, db):
         super().__init__()
         self.db = db
         self.event_id = None
-        self._dirty = False
+        self.paket_id = None
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 18, 0, 0)
         v.setSpacing(14)
-        bar = toolbar()
-        b_pdf = theme.button("Impor PDF", "file-text", tip="Baca kunci dari folder PDF pembahasan soal",
-                             slot=self._import_pdf)
-        b_xls = theme.button("Impor Excel", "sheet", tip="Muat kunci dari file Excel", slot=self._import_excel)
-        b_add = theme.button("Tambah bidang", "plus", tip="Tambah kode naskah baru", slot=self._add_row)
-        b_edit = theme.button("Edit kunci", "grid", tip="Edit kunci per nomor soal untuk baris yang dipilih",
-                              slot=self._edit_current)
-        b_del = theme.button("Hapus", "trash", "danger", "Hapus baris yang dipilih", self._del_rows)
-        for w in (b_pdf, b_xls, divider(), b_add, b_edit, b_del):
-            bar.addWidget(w)
-        bar.addStretch()
-        self.state = badge("Belum disimpan", "warn")
-        self.state.setVisible(False)
-        bar.addWidget(self.state)
-        self.save_btn = theme.button("Simpan kunci", "save", "primary", slot=self.save)
-        bar.addWidget(self.save_btn)
-        v.addLayout(bar)
-        ToolbarFit(self, bar, (b_del, b_edit, b_add, b_xls, b_pdf, self.save_btn))
 
-        # bidang yang terdaftar di server tetapi belum punya kunci di laptop ini
-        self.srv_box = QFrame()
-        self.srv_box.setProperty("role", "card")
-        sb = QHBoxLayout(self.srv_box)
-        sb.setContentsMargins(16, 10, 12, 10)
-        sb.setSpacing(10)
-        self.srv_text = QLabel("")
-        self.srv_text.setWordWrap(True)
-        sb.addWidget(self.srv_text, 1)
-        self.srv_buttons = QHBoxLayout()
-        self.srv_buttons.setSpacing(8)
-        sb.addLayout(self.srv_buttons)
-        self.srv_box.setVisible(False)
-        v.addWidget(self.srv_box)
+        # ---- kartu paket yang dipakai
+        self.card = QFrame()
+        self.card.setProperty("role", "card")
+        ch = QHBoxLayout(self.card)
+        ch.setContentsMargins(18, 12, 12, 12)
+        ch.setSpacing(8)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        cap = QLabel("Paket kunci jawaban")
+        cap.setProperty("role", "section")
+        self.p_name = QLabel("")
+        self.p_name.setProperty("role", "h2")
+        self.p_name.setWordWrap(True)
+        self.p_sub = QLabel("")
+        self.p_sub.setProperty("role", "muted")
+        self.p_sub.setWordWrap(True)
+        self.p_sub.setTextFormat(Qt.RichText)
+        for w in (cap, self.p_name, self.p_sub):
+            col.addWidget(w)
+        ch.addLayout(col, 1)
+        self.btn_ganti = theme.button("Ganti paket", "refresh", tip="Pilih paket kunci lain untuk event ini",
+                                      slot=self._pilih)
+        self.btn_buka = theme.button("Buka paket", "key", tip="Lihat atau ubah isi paket di menu Kunci jawaban",
+                                     slot=lambda: self.buka_paket.emit(self.paket_id))
+        ch.addWidget(self.btn_ganti, 0, Qt.AlignVCenter)
+        ch.addWidget(self.btn_buka, 0, Qt.AlignVCenter)
+
+        # ---- catatan: kode server yang belum ada di paket / kunci lama
+        self.note = QFrame()
+        self.note.setProperty("role", "card")
+        nh = QHBoxLayout(self.note)
+        nh.setContentsMargins(16, 10, 12, 10)
+        nh.setSpacing(10)
+        self.note_text = QLabel("")
+        self.note_text.setWordWrap(True)
+        self.note_text.setTextFormat(Qt.RichText)
+        nh.addWidget(self.note_text, 1)
+        self.note_btn = theme.button("", "key", "primary")
+        self.note_btn.clicked.connect(self._note_action)
+        nh.addWidget(self.note_btn, 0, Qt.AlignVCenter)
+        self._note_do = None
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Kode naskah", "Bidang", "Soal", "Kunci", "Catatan"])
+        self.table.setHorizontalHeaderLabels(["Kode naskah", "Mata pelajaran", "Soal", "Lembar di event ini", "Catatan"])
         setup_table(self.table)
-        self.table.setSelectionBehavior(QTableWidget.SelectItems)
-        self.table.setToolTip("Klik \"Lihat kunci jawaban\" untuk melihat atau mengedit kunci per nomor.\n"
-                              "Kode naskah dan bidang bisa diketik langsung.")
-        self.table.setItemDelegateForColumn(COL_KUNCI, KunciLinkDelegate(self.table))
-        self.table.setMouseTracking(True)
-        self.table.viewport().setAttribute(Qt.WA_Hover, True)
-        self.table.entered.connect(lambda i: self.table.viewport().setCursor(
-            Qt.PointingHandCursor if i.column() == COL_KUNCI else Qt.ArrowCursor))
-        self.table.viewportEntered.connect(lambda: self.table.viewport().setCursor(Qt.ArrowCursor))
+        self.table.setToolTip("Isi paket diubah di menu Kunci jawaban (sidebar kiri).")
         h = self.table.horizontalHeader()
-        h.setSectionResizeMode(COL_KODE, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(COL_BIDANG, QHeaderView.Interactive)
-        h.setSectionResizeMode(COL_JUMLAH, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(COL_KUNCI, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(COL_CATATAN, QHeaderView.Stretch)
-        self.table.setColumnWidth(COL_BIDANG, 220)
-        self.table.itemChanged.connect(self._item_changed)
-        self.table.cellClicked.connect(self._cell_clicked)
-        self.table.cellDoubleClicked.connect(self._double_click)
-        self.empty = EmptyState("key", "Belum ada kunci jawaban",
-                                "Impor dari PDF pembahasan atau Excel, atau tambah bidang secara manual.")
+        h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(1, QHeaderView.Interactive)
+        h.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.setColumnWidth(1, 260)
+        self.table.cellDoubleClicked.connect(lambda *_: self.paket_id is not None and self.buka_paket.emit(self.paket_id))
+
+        content = QWidget()
+        cv = QVBoxLayout(content)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(14)
+        cv.addWidget(self.card)
+        cv.addWidget(self.note)
+        cv.addWidget(self.table, 1)
+
+        self.empty = EmptyState("key", "Event ini belum memakai paket kunci jawaban",
+                                "Pilih paket kunci (mis. FSN PROVINSI PAKET 1) yang dipakai menilai lembar event ini. "
+                                "Paket dibuat dan diisi di menu Kunci jawaban (sidebar kiri).",
+                                theme.button("Pilih paket kunci", "key", "primary", slot=self._pilih))
         self.stack = QStackedWidget()
         self.stack.addWidget(self.empty)
-        self.stack.addWidget(self.table)
+        self.stack.addWidget(content)
         v.addWidget(self.stack, 1)
-        self.table.model().rowsInserted.connect(self._update_empty)
-        self.table.model().rowsRemoved.connect(self._update_empty)
 
-    def _update_empty(self, *_):
-        self.stack.setCurrentWidget(self.table if self.table.rowCount() else self.empty)
+    # ---- dipanggil jendela utama (antarmuka lama tab Kunci tetap ada: kunci tidak lagi diedit di sini)
+    def confirm_leave(self):
+        return True
+
+    def ask_save(self):
+        return True
+
+    def _set_dirty(self, _dirty):
+        pass
+
+    def show_server_bidang(self):
+        """Daftar bidang server event berubah (sinkron): muat ulang tampilan."""
+        self.load(self.event_id)
 
     # ---- data
     def load(self, event_id):
         self.event_id = event_id
-        self.table.blockSignals(True)
         self.table.setRowCount(0)
-        if event_id is not None:
-            for s in self.db.naskah(event_id):
-                self._append(s.kode, s.bidang, s.kunci, sumber=s.sumber)
-        self.table.blockSignals(False)
-        self._set_dirty(False)
-        self.show_server_bidang()
-
-    def show_server_bidang(self):
-        """Tampilkan bidang server yang kode naskahnya belum ada di tabel kunci."""
-        while self.srv_buttons.count():
-            w = self.srv_buttons.takeAt(0).widget()
-            if w:
-                w.deleteLater()
-        if self.event_id is None:
-            self.srv_box.setVisible(False)
+        self.note.setVisible(False)
+        if event_id is None:
+            self.paket_id = None
+            self.stack.setCurrentWidget(self.empty)
             return
-        have = {r[0] for r in self._rows()}
-        missing = [b for b in self.db.server_bidang(self.event_id) if b["kode_naskah"] not in have]
-        self.srv_box.setVisible(bool(missing))
-        if not missing:
-            return
-        daftar = ", ".join(f"<b>{b['nama']}</b> ({b['kode_naskah']} · {b['jumlah_soal']} soal)" for b in missing)
-        self.srv_text.setText(f"Bidang dari server yang belum ada kuncinya: {daftar}")
-        for b in missing[:3]:           # sisanya muncul setelah yang ini diisi (tetap tertulis di teks)
-            btn = theme.button(f"Isi kunci {b['kode_naskah']}", "key", "primary" if b is missing[0] else None,
-                               f"Isi kunci {b['nama']}", lambda _=False, b=b: self.add_from_server(b))
-            self.srv_buttons.addWidget(btn)
-        theme.refresh_all()
+        paket = self.db.event_paket(event_id)
+        self.paket_id = paket["id"] if paket else None
+        lembar = kode_lembar(self.db, event_id)
+        if paket is None:
+            lama = self.db.naskah_lama(event_id)
+            if not lama:
+                self.stack.setCurrentWidget(self.empty)
+                return
+            self._show_lama(lama, lembar)
+        else:
+            self._show_paket(paket, lembar)
+        self.stack.setCurrentIndex(1)
 
-    def add_from_server(self, b):
-        """Tambah baris bidang dari server (kode, nama, jumlah soal sudah terisi) lalu buka editor kunci."""
-        self.table.blockSignals(True)
-        self._append(b["kode_naskah"], b["nama"], "")
-        self.table.blockSignals(False)
-        r = self.table.rowCount() - 1
-        self.table.setCurrentCell(r, COL_KODE)
-        self._edit_row(r, new=True, jumlah=int(b.get("jumlah_soal") or 0))
-        self.show_server_bidang()
-
-    def _append(self, kode, bidang, kunci, note="", sumber="", warn=None):
+    def _row(self, kode, nama, jumlah, n_lembar, note="", tone=None):
         r = self.table.rowCount()
         self.table.insertRow(r)
-        self.table.setItem(r, COL_KODE, QTableWidgetItem(kode))
-        self.table.setItem(r, COL_BIDANG, QTableWidgetItem(bidang))
-        jml = QTableWidgetItem(str(len(kunci)))
-        jml.setFlags(jml.flags() & ~Qt.ItemIsEditable)
-        jml.setTextAlignment(Qt.AlignCenter)
-        self.table.setItem(r, COL_JUMLAH, jml)
-        ki = QTableWidgetItem(kunci)
+        ki = _item(kode)
         ki.setFont(theme.mono())
-        ki.setFlags(ki.flags() & ~Qt.ItemIsEditable)      # diedit lewat editor per nomor
-        ki.setData(Qt.UserRole, sumber)
-        self.table.setItem(r, COL_KUNCI, ki)
-        ci = QTableWidgetItem(note)
-        ci.setFlags(ci.flags() & ~Qt.ItemIsEditable)
-        ci.setToolTip(note)
-        self.table.setItem(r, COL_CATATAN, ci)
-        if note and (warn is None or warn):
-            paint(ci, "warn")
+        self.table.setItem(r, 0, ki)
+        self.table.setItem(r, 1, _item(nama, tip=nama))
+        self.table.setItem(r, 2, _item(str(jumlah) if jumlah != "" else "", Qt.AlignCenter))
+        self.table.setItem(r, 3, _item(str(n_lembar) if n_lembar else "—", Qt.AlignCenter))
+        ci = _item(note, tip=note)
+        if tone:
+            paint(ci, tone)
+        self.table.setItem(r, 4, ci)
 
-    def _item_changed(self, item):
-        if item.column() == COL_KUNCI:
-            self.table.blockSignals(True)
-            clean = re.sub(r"[^A-Ea-e]", "", item.text()).upper()
-            if clean != item.text():
-                item.setText(clean)
-            self.table.item(item.row(), COL_JUMLAH).setText(str(len(clean)))
-            self.table.blockSignals(False)
-        self._set_dirty(True)
+    def _show_paket(self, paket, lembar):
+        mapel = self.db.mapel(paket["id"])
+        evs = [e["nama"] for e in self.db.paket_events(paket["id"])]
+        lain = [n for n in evs if n != self.db.event(self.event_id)["nama"]]
+        self.p_name.setText(paket["nama"])
+        kode_all = [k for m in mapel for k in m["kode"]]
+        sub = [f"{len(mapel)} mata pelajaran", f"kode naskah {ringkas_kode(kode_all)}" if kode_all else "belum ada kode naskah"]
+        sub.append(f"juga dipakai {', '.join(lain[:4])}{'…' if len(lain) > 4 else ''}" if lain else "hanya dipakai event ini")
+        self.p_sub.setText(" &nbsp;·&nbsp; ".join(sub))
+        self.btn_buka.setVisible(True)
+        self.btn_ganti.setVisible(True)
 
-    def _set_dirty(self, dirty):
-        self._dirty = dirty
-        self.state.setVisible(dirty)
-
-    def confirm_leave(self):
-        return not self._dirty
-
-    def ask_save(self):
-        """Kunci belum disimpan saat event ditinggalkan / aplikasi ditutup: Simpan / Buang / Batal.
-        True = boleh lanjut."""
-        if not self._dirty or self.event_id is None:
-            return True
-        r = QMessageBox.question(self, "Kunci jawaban", "Kunci jawaban event ini belum disimpan. Simpan sekarang?",
-                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
-        if r == QMessageBox.Save:
-            return self.save()
-        return r == QMessageBox.Discard
-
-    def _rows(self):
-        out = []
-        for r in range(self.table.rowCount()):
-            get = lambda c: (self.table.item(r, c).text().strip() if self.table.item(r, c) else "")  # noqa: E731
-            ki = self.table.item(r, COL_KUNCI)
-            src = (ki.data(Qt.UserRole) if ki else "") or ""
-            out.append((get(COL_KODE), get(COL_BIDANG), get(COL_KUNCI).upper(), src))
-        return out
-
-    def save(self):
-        """Simpan kunci; False bila belum bisa disimpan (pesan kesalahan sudah ditampilkan)."""
-        if self.event_id is None:
-            return False
-        errors, seen, soal = [], set(), []
-        for i, (kode, bidang, kunci, sumber) in enumerate(self._rows(), 1):
-            if not (kode or bidang or kunci):
-                continue
-            if not kode:
-                errors.append(f"Baris {i}: kode naskah kosong")
-            elif kode in seen:
-                errors.append(f"Baris {i}: kode naskah {kode} dipakai dua kali")
-            if not bidang:
-                errors.append(f"Baris {i}: nama bidang kosong")
-            if not kunci:
-                errors.append(f"Baris {i}: kunci kosong")
-            elif len(kunci) > 180:
-                errors.append(f"Baris {i}: kunci lebih dari 180 soal")
-            elif bad := bukan_kunci(kunci):
-                nomor = ", ".join(map(str, bad[:10])) + (f" (dan {len(bad) - 10} lainnya)" if len(bad) > 10 else "")
-                errors.append(f"Baris {i} ({kode or bidang}): soal {nomor} belum berisi kunci A–E. "
-                              "Buka \"Kunci belum lengkap\" lalu pilih kuncinya.")
-            seen.add(kode)
-            soal.append(NI.Soal(kode, bidang, kunci, sumber))
-        if errors:
-            QMessageBox.warning(self, "Kunci belum bisa disimpan", "\n".join(errors))
-            return False
-        self.db.set_naskah(self.event_id, soal)
-        self.load(self.event_id)          # muat ulang, urut menurut kode naskah
-        self.changed.emit()
-        QMessageBox.information(self, "Kunci", f"{len(soal)} kode naskah tersimpan.")
-        return True
-
-    # ---- editor per nomor
-    def _cell_clicked(self, r, c):
-        if c == COL_KUNCI:              # tautan "Lihat kunci jawaban": cukup sekali klik
-            self._edit_row(r)
-
-    def _double_click(self, r, c):
-        if c in (COL_JUMLAH, COL_CATATAN):
-            self._edit_row(r)
-
-    def _edit_current(self):
-        r = self.table.currentRow()
-        if r < 0:
-            QMessageBox.information(self, "Kunci", "Pilih dulu baris bidang yang kuncinya akan diedit.")
-            return
-        self._edit_row(r)
-
-    def _edit_row(self, r, new=False, jumlah=0):
-        kode, bidang, kunci, sumber = self._rows()[r]
-        d = KunciDialog(self, kode, bidang, kunci, sumber, jumlah=jumlah)
-        if not d.exec():
-            if new:
-                self.table.removeRow(r)
-            return
-        kode, bidang, kunci = d.values()
-        self.table.blockSignals(True)
-        self.table.item(r, COL_KODE).setText(kode)
-        self.table.item(r, COL_BIDANG).setText(bidang)
-        self.table.item(r, COL_KUNCI).setText(kunci)
-        self.table.item(r, COL_JUMLAH).setText(str(len(kunci)))
-        self.table.blockSignals(False)
-        self._set_dirty(True)
-        self.save()
-
-    # ---- tombol
-    def _add_row(self):
-        self.table.blockSignals(True)
-        self._append("", "", "")
-        self.table.blockSignals(False)
-        r = self.table.rowCount() - 1
-        self.table.setCurrentCell(r, COL_KODE)
-        self._edit_row(r, new=True)
-
-    def _del_rows(self):
-        rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
+        rows = []
+        for m in mapel:
+            bad = nomor_tanpa_kunci(m["kunci"])
+            for k in m["kode"]:
+                if not kunci_lengkap(m["kunci"]):
+                    note, tone = (f"kunci belum lengkap (soal {', '.join(map(str, bad[:6]))}"
+                                  f"{'…' if len(bad) > 6 else ''}): lembar belum dinilai", "error")
+                else:
+                    note, tone = "", None
+                rows.append((k, m["nama"], len(m["kunci"]), lembar.get(k, 0), note, tone))
+            if not m["kode"]:
+                rows.append(("—", m["nama"], len(m["kunci"]), 0, "belum ada kode naskah (isi di menu Kunci jawaban)",
+                             "warn"))
+        punya = set(kode_all)
+        for k, n in lembar.items():
+            if k not in punya:
+                rows.append((k, "—", "", n, "kode naskah ini tidak ada di paket: lembarnya belum dinilai", "error"))
+        rows.sort(key=lambda r: (r[0] == "—", kode_sort(r[0]) if r[0] != "—" else (0, 0)))
         for r in rows:
-            self.table.removeRow(r)
-        if rows:
-            self._set_dirty(True)
+            self._row(*r)
 
-    def _import_pdf(self):
+        missing = [b for b in self.db.server_bidang(self.event_id) if b["kode_naskah"] not in punya]
+        if missing:
+            daftar = ", ".join(f"<b>{b['nama']}</b> ({b['kode_naskah']} · {b['jumlah_soal']} soal)" for b in missing)
+            self._set_note(f"Kode naskah dari server yang belum ada di paket {paket['nama']}: {daftar}. "
+                           "Tambahkan kodenya ke mata pelajaran yang sesuai di paket.",
+                           "Buka paket", lambda: self.buka_paket.emit(self.paket_id))
+
+    def _show_lama(self, lama, lembar):
+        self.p_name.setText("Kunci lama (tersimpan langsung di event ini)")
+        self.p_sub.setText(f"{len(lama)} kode naskah &nbsp;·&nbsp; dibuat sebelum ada paket kunci")
+        self.btn_buka.setVisible(False)
+        self.btn_ganti.setVisible(False)            # tombol "Pilih paket kunci" ada di catatan di bawahnya
+        for s in lama:
+            self._row(s.kode, s.bidang, s.jumlah, lembar.get(s.kode, 0))
+        punya = {s.kode for s in lama}
+        for k, n in sorted(lembar.items(), key=lambda kv: kode_sort(kv[0])):
+            if k not in punya:
+                self._row(k, "—", "", n, "kode naskah ini tidak ada di kunci: lembarnya belum dinilai", "error")
+        self._set_note("Event ini dibuat sebelum ada paket kunci, jadi masih memakai kunci yang tersimpan di event. "
+                       "Pilih paket kunci untuk menggantinya (kunci lama tidak dihapus).",
+                       "Pilih paket kunci", self._pilih)
+
+    def _set_note(self, text, button, action):
+        self.note_text.setText(text)
+        self.note_btn.setText(button)
+        self._note_do = action
+        self.note.setVisible(True)
+
+    def _note_action(self):
+        if self._note_do:
+            self._note_do()
+
+    # ---- pilih / ganti paket
+    def _pilih(self):
         if self.event_id is None:
             return
-        folder = QFileDialog.getExistingDirectory(self, "Folder PDF pembahasan soal")
-        if not folder:
-            return
-        pdfs = sorted(p for p in Path(folder).iterdir() if p.suffix.lower() == ".pdf")
-        if not pdfs:
-            QMessageBox.information(self, "Impor PDF", "Tidak ada file PDF di folder itu.")
-            return
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        problems, gagal, cara = [], [], {KU.CARA_1: 0, KU.CARA_2: 0}
-        try:
-            self.table.blockSignals(True)
-            for p in pdfs:
-                QApplication.processEvents()
-                k = KU.parse(p)
-                if k.jumlah_soal == 0:
-                    gagal.append(p.name)
-                    continue
-                cara[k.cara] = cara.get(k.cara, 0) + 1
-                notes = list(k.masalah)
-                if notes:
-                    problems.append(f"&bull; <b>{p.name}</b>: {'; '.join(notes)}")
-                if k.cara == KU.CARA_2:
-                    notes.append("dibaca dengan cara 2 ('Jawaban: X' di awal baris)")
-                self._append("", KU.suggest_name(p), k.kunci, "; ".join(notes), sumber=str(p),
-                             warn=bool(k.masalah))
-        finally:
-            self.table.blockSignals(False)
-            QApplication.restoreOverrideCursor()
-        self._set_dirty(True)
-        n_ok = len(pdfs) - len(gagal)
-        msg = (f"{n_ok} dari {len(pdfs)} PDF terbaca: {cara[KU.CARA_1]} dengan cara 1 (<i>Kunci Jawaban: X</i>), "
-               f"{cara[KU.CARA_2]} dengan cara 2 (<i>Jawaban: X</i> di awal baris).<br>"
-               "Isi kolom <b>Kode Naskah</b>, periksa <b>Nama Bidang</b>, lalu klik <b>Simpan kunci</b>.")
-        if gagal:
-            msg += "<br><br>Kunci tidak ditemukan di: " + ", ".join(gagal)
-        if problems:
-            msg += ("<br><br>Perlu diperhatikan (kunci tetap terbaca; baris Catatan berwarna):<br>"
-                    + "<br>".join(problems))
-        QMessageBox.information(self, "Impor PDF", msg)
-
-    def _import_excel(self):
-        if self.event_id is None:
-            return
-        path, _ = QFileDialog.getOpenFileName(self, "File kunci (Excel)", "", "Excel (*.xlsx)")
-        if not path:
-            return
-        try:
-            soal = NI.load_kunci(path)
-        except Exception as e:  # file bukan format kunci
-            QMessageBox.warning(self, "Impor Excel", f"File tidak bisa dibaca sebagai file kunci:\n{e}")
-            return
-        existing = {r[0]: i for i, r in enumerate(self._rows())}
-        self.table.blockSignals(True)
-        for s in soal.values():
-            kunci = re.sub(r"[\s,;|/]", "", s.kunci)     # pemisah yang diketik di Excel ("A, B, C") bukan kunci
-            if s.kode in existing:
-                r = existing[s.kode]
-                self.table.item(r, COL_BIDANG).setText(s.bidang)
-                self.table.item(r, COL_KUNCI).setText(kunci)
-                self.table.item(r, COL_KUNCI).setData(Qt.UserRole, s.sumber)
-                self.table.item(r, COL_JUMLAH).setText(str(len(kunci)))
-            else:
-                self._append(s.kode, s.bidang, kunci, sumber=s.sumber)
-        self.table.blockSignals(False)
-        self._set_dirty(True)
-        QMessageBox.information(self, "Impor Excel", f"{len(soal)} kode naskah dimuat. Klik Simpan kunci.")
+        r = pilih_paket(self, self.db, self.event_id)
+        if r == "buka":
+            self.buka_paket.emit(None)
+        elif r:
+            self.load(self.event_id)
+            self.changed.emit()

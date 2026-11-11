@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QHB
 from app import server_client as SC
 from app import server_link as SL
 from app import theme
+from app.paket_page import pilih_paket
 from app.review_tab import ReviewTab
 from app.server_dialog import ServerDialog
 from app.widgets import CountCard, EmptyState, toolbar
@@ -148,6 +149,8 @@ class ScanTab(QWidget):
     linked = Signal()                  # event dihubungkan ke kompetisi server
     running = Signal(bool)             # proses baca berjalan / selesai
     summary = Signal(dict)             # jumlah lembar per status (untuk judul event dan sidebar)
+    paket_dipilih = Signal()           # paket kunci event dipilih sebelum scan (tab Kunci & judul perlu dimuat ulang)
+    buka_kunci = Signal()              # panitia ingin membuat/mengisi paket di menu Kunci jawaban
 
     def __init__(self, db, data_dir):
         super().__init__()
@@ -476,12 +479,33 @@ class ScanTab(QWidget):
             self.desk.setSizes([220, 600] if tegak else [320, 900])
 
     # ---- tambah & proses
+    def _pastikan_paket(self):
+        """Sebelum memindai foto, event wajib sudah memakai paket kunci jawaban. Bila belum, panitia diminta
+        memilih paket dulu; False bila batal (foto tidak ditambahkan)."""
+        if self.event_id is None or self.busy():
+            return False
+        if self.db.event_paket(self.event_id) is not None:
+            return True
+        r = pilih_paket(self, self.db, self.event_id,
+                        "Sebelum memindai, pilih dulu paket kunci jawaban yang dipakai event ini.")
+        if r == "buka":
+            self.buka_kunci.emit()
+        if r != "dipilih":
+            return False
+        self.paket_dipilih.emit()
+        self.refresh()
+        return True
+
     def _add_folder(self):
+        if not self._pastikan_paket():
+            return
         folder = QFileDialog.getExistingDirectory(self, "Folder foto LJK")
         if folder:
             self._start([p for p in Path(folder).iterdir() if p.suffix.lower() in EXTS])
 
     def _add_files(self):
+        if not self._pastikan_paket():
+            return
         files, _ = QFileDialog.getOpenFileNames(self, "Foto LJK", "", "Gambar (*.jpg *.jpeg *.png *.bmp *.tif *.tiff)")
         if files:
             self._start([Path(f) for f in files])
@@ -691,7 +715,8 @@ class ScanTab(QWidget):
         nokode = sum(1 for v in views if v.status != "Gagal" and v.skor is None)
         gagal = sum(1 for v in views if v.status == "Gagal")
         if nokode + gagal == len(views):
-            sebab = ("kunci jawaban event ini belum disimpan (tab Kunci jawaban)" if not self.db.naskah(self.event_id)
+            sebab = ("event ini belum memakai paket kunci jawaban, atau paketnya belum berisi kode naskah "
+                     "(tab Kunci jawaban)" if not self.db.naskah(self.event_id)
                      else "semua lembar gagal dibaca atau kode naskahnya belum terdaftar di kunci")
             QMessageBox.information(self, "Ekspor", f"Belum ada lembar yang bisa diekspor: {sebab}.")
             return

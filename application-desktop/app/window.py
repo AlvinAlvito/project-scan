@@ -1,5 +1,6 @@
-"""Jendela utama: bilah atas (merek, cari, server), daftar event di sidebar kiri, dan lembar putih berisi
-tab Kunci / Scan & Nilai (antrean + cek manual) / Latih di kanan."""
+"""Jendela utama: bilah atas (merek, cari, server), sidebar kiri (daftar event, lalu menu Kunci jawaban), dan
+lembar putih di kanan berisi tab Kunci / Scan & Nilai (antrean + cek manual) / Latih untuk event terpilih, atau
+pustaka paket kunci jawaban (dipakai bersama oleh banyak event) saat menu Kunci jawaban dibuka."""
 import html
 import shutil
 
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFormLayout, QHBoxLayout, 
 from app import icons, server_client as SC, server_link as SL, theme
 from app.kunci_tab import KunciTab
 from app.latih_tab import LatihTab
+from app.paket_page import PaketPage
 from app.scan_tab import ScanTab
 from app.server_dialog import ServerDialog
 from app.widgets import EmptyState
@@ -48,7 +50,7 @@ class EventDialog(QDialog):
         title.setProperty("role", "title")
         v.addWidget(title)
         self.nama = QLineEdit(nama)
-        self.nama.setPlaceholderText("FSN PROVINSI PAKET 1")
+        self.nama.setPlaceholderText("FSN NIAS 2026")
         self.tanggal = QLineEdit(tanggal)
         self.tanggal.setPlaceholderText("24 September 2026")
         form = QFormLayout()
@@ -120,6 +122,7 @@ class MainWindow(QMainWindow):
         self.db, self.data_dir = db, data_dir
         self.event_id = None
         self._summary = None
+        self._page = "event"            # "event": tab event terpilih; "kunci": pustaka paket kunci jawaban
         self.setWindowTitle("LJK Reader")
         self.resize(1440, 880)
         self.setMinimumSize(640, 560)
@@ -127,6 +130,7 @@ class MainWindow(QMainWindow):
         self.kunci = KunciTab(db)
         self.scan = ScanTab(db, data_dir)
         self.latih = LatihTab(db, data_dir)
+        self.library = PaketPage(db)
 
         # ---- bilah atas: merek, cari lembar, server
         top = QWidget()
@@ -209,8 +213,31 @@ class MainWindow(QMainWindow):
         self.events.setMouseTracking(True)
         self.events.setVerticalScrollMode(QListWidget.ScrollPerPixel)
         self.events.currentItemChanged.connect(self._event_selected)
-        self.events.itemClicked.connect(lambda _it: self._close_side())
+        self.events.itemClicked.connect(lambda _it: (self._show_event_page(), self._close_side()))
         sv.addWidget(self.events, 1)
+
+        # ---- menu Kunci jawaban: pustaka paket kunci yang dipakai bersama oleh banyak event
+        sv.addSpacing(10)
+        sec2 = QHBoxLayout()
+        sec2.setContentsMargins(8, 0, 0, 0)
+        lb2 = QLabel("Kunci jawaban")
+        lb2.setProperty("role", "section")
+        sec2.addWidget(lb2)
+        sec2.addStretch()
+        sv.addLayout(sec2)
+        sv.addSpacing(4)
+        self.nav = QListWidget()
+        self.nav.setItemDelegate(EventDelegate(self.nav))
+        self.nav.setMouseTracking(True)
+        self.nav.setFixedHeight(56)
+        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        nav_item = QListWidgetItem("Paket kunci jawaban\n")
+        nav_item.setToolTip("Paket kunci jawaban: satu paket bisa dipakai banyak event")
+        self.nav.addItem(nav_item)
+        self.nav.itemClicked.connect(lambda _it: self._open_library())
+        sv.addWidget(self.nav)
+        sv.addSpacing(6)
         folder = theme.button("Folder data", "folder", tip=str(data_dir),
                               slot=lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir))))
         sv.addWidget(folder)
@@ -252,16 +279,23 @@ class MainWindow(QMainWindow):
             self.tabs.addTab(w, text)
         self.tabs.currentChanged.connect(self._tab_changed)
         self.kunci.changed.connect(self.scan.refresh)
+        self.kunci.changed.connect(self._update_header)
+        self.kunci.buka_paket.connect(self._open_library)
         self.scan.linked.connect(self._event_linked)
         self.scan.summary.connect(self._on_summary)
         self.scan.running.connect(self._running_changed)
+        self.scan.paket_dipilih.connect(self._paket_event_berubah)
+        self.scan.buka_kunci.connect(lambda: self._open_library(None))
+        self.library.changed.connect(self._paket_berubah)
 
         self.empty = EmptyState("calendar", "Belum ada event",
-                                "Buat event untuk mulai memasukkan kunci jawaban dan memindai LJK.",
+                                "Buat event untuk mulai memindai LJK. Kunci jawaban disimpan sebagai paket di menu "
+                                "Kunci jawaban (kiri) dan bisa dipakai banyak event.",
                                 theme.button("Buat event", "plus", "primary", slot=self._new_event))
         self.stack = QStackedWidget()
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self.tabs)
+        self.stack.addWidget(self.library)
         cv.addWidget(self.stack, 1)
 
         body = self._body = QWidget()
@@ -285,6 +319,7 @@ class MainWindow(QMainWindow):
         self._theme_changed()
         self._loader = None
         self._sempit = False
+        self._update_nav()
         self._load_events()
         self.events.setFocus()                          # bukan kolom cari: fokus awal tidak menyorot apa pun
         self._sync_server_events()
@@ -304,6 +339,7 @@ class MainWindow(QMainWindow):
             self.logo.setPixmap(icons.pixmap("scan", theme.c("on_accent"), 16, dpr))
             self.logo.setStyleSheet(f"background: {theme.c('accent')}; border-radius: 6px;")
         self.events.viewport().update()
+        self.nav.viewport().update()
         self._update_header()                           # warna teks tebal di subjudul ikut tema baru
         theme.refresh_all()
 
@@ -344,12 +380,14 @@ class MainWindow(QMainWindow):
             self.events.setCurrentRow(idx)
         else:
             self._set_event(None)
+        if self._page == "kunci":
+            self.events.clearSelection()                # menu Kunci jawaban yang sedang terbuka tetap disorot
 
     def _event_selected(self, cur, _prev):
         eid = cur.data(Qt.UserRole) if cur else None
         if eid is not None and eid == self.event_id:
             # daftar dimuat ulang dengan event yang sama (sinkron server, ubah event): jangan muat ulang tab,
-            # supaya kunci / cek manual yang belum disimpan tidak hilang
+            # supaya cek manual yang belum disimpan tidak hilang
             self._update_header()
             self.kunci.show_server_bidang()
             return
@@ -379,6 +417,8 @@ class MainWindow(QMainWindow):
         self.event_id = event_id
         self._summary = None
         has = event_id is not None
+        self._page = "event"
+        self.nav.clearSelection()
         self.stack.setCurrentWidget(self.tabs if has else self.empty)
         for a in (self.act_push, self.act_edit):
             a.setEnabled(has)
@@ -419,6 +459,10 @@ class MainWindow(QMainWindow):
                 + (f"; {', '.join(parts)}" if parts else ""))
 
     def _update_header(self):
+        if self._page == "kunci":
+            self.title.setText("Kunci jawaban")
+            self.subtitle.setText(self.library.summary())
+            return
         if self.event_id is None:
             self.title.setText("Selamat datang")
             self.subtitle.setText("Pembaca Lembar Jawaban Komputer POSI")
@@ -426,7 +470,14 @@ class MainWindow(QMainWindow):
         ev = self.db.event(self.event_id)
         self.title.setText(ev["nama"])
         linked = ev["server_kompetisi_id"] and ev["server_url"]
-        parts = [html.escape(ev["tanggal"]), self._finding()]
+        paket = self.db.event_paket(self.event_id)
+        if paket is not None:
+            kunci = f"paket {html.escape(paket['nama'])}"
+        elif self.db.naskah_lama(self.event_id):
+            kunci = "kunci lama (belum memilih paket)"
+        else:
+            kunci = f"<span style='color:{theme.tone_hex('warn')[1]}'>belum memilih paket kunci</span>"
+        parts = [html.escape(ev["tanggal"]), self._finding(), kunci]
         if linked:
             parts.append(f"terhubung ke server (kompetisi #{ev['server_kompetisi_id']})")
         self.subtitle.setText(" &nbsp;·&nbsp; ".join(p for p in parts if p))
@@ -443,7 +494,56 @@ class MainWindow(QMainWindow):
         self._update_server_button()
         self._sync_server_events()
 
+    # ---- menu Kunci jawaban (pustaka paket) <-> halaman event
+    def _update_nav(self):
+        ps = list(self.db.pakets())
+        it = self.nav.item(0)
+        it.setText(f"Paket kunci jawaban\n{len(ps)} paket" if ps else "Paket kunci jawaban\nbelum ada paket")
+
+    def _open_library(self, paket_id=None):
+        """Buka pustaka paket kunci (opsional langsung memilih paket_id). Event yang sedang dibuka tetap terbuka
+        di belakang; klik event di sidebar untuk kembali."""
+        self._page = "kunci"
+        self.library.reload(select=paket_id)
+        self.stack.setCurrentWidget(self.library)
+        self.events.clearSelection()
+        self.nav.setCurrentRow(0)
+        for w in (self.scan.kontras, self.scan.btn_add, self.scan.btn_export):
+            w.setVisible(False)
+        self._update_header()
+        self._close_side()
+
+    def _show_event_page(self):
+        if self._page == "event":
+            return
+        self._page = "event"
+        self.nav.clearSelection()
+        self._sorot_event(self.event_id)
+        has = self.event_id is not None
+        self.stack.setCurrentWidget(self.tabs if has else self.empty)
+        for w in (self.scan.kontras, self.scan.btn_add, self.scan.btn_export):
+            w.setVisible(has)
+        self._update_header()
+        if has and self.tabs.currentWidget() is self.scan:
+            self.scan.activate()                        # nilai mungkin berubah karena kunci paket diubah
+
+    def _paket_event_berubah(self):
+        """Event memilih paket (sebelum scan): tab Kunci, judul, dan menu Kunci jawaban ikut diperbarui."""
+        self.kunci.load(self.event_id)
+        self._update_nav()
+        self._update_header()
+
+    def _paket_berubah(self):
+        """Isi pustaka paket berubah (kunci, kode naskah, nama): nilai event yang terbuka dihitung ulang."""
+        self._update_nav()
+        self._update_header()
+        if self.event_id is not None:
+            self.kunci.load(self.event_id)
+            self.scan.refresh()
+
     def _search_changed(self, text):
+        if text and self._page == "kunci" and self.event_id is not None:
+            self._show_event_page()
         if text and self.tabs.currentWidget() is not self.scan:
             self.tabs.setCurrentWidget(self.scan)
         self.scan.set_query(text)
@@ -532,8 +632,8 @@ class MainWindow(QMainWindow):
         ev = self.db.event(self.event_id)
         n = len(self.db.lembar(self.event_id))
         if QMessageBox.question(self, "Hapus event",
-                                f"Hapus event '{ev['nama']}' beserta kunci dan {n} lembar hasil scan?\n"
-                                "Foto asli tidak ikut terhapus.") != QMessageBox.Yes:
+                                f"Hapus event '{ev['nama']}' beserta {n} lembar hasil scan?\n"
+                                "Paket kunci jawaban dan foto asli tidak ikut terhapus.") != QMessageBox.Yes:
             return
         shutil.rmtree(self.data_dir / "event" / str(self.event_id), ignore_errors=True)
         self.db.delete_event(self.event_id)

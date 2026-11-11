@@ -75,11 +75,21 @@ tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampil
 
 1. **Event** (panel kiri): **+** -> isi nama event & tanggal. Menu **⋯** di samping judul "Event" berisi
    ambil kompetisi dari server, kirim event ke server, ubah, dan hapus event.
-2. **Kunci Jawaban**: Impor dari PDF pembahasan / Impor dari Excel -> isi Kode Naskah &
-   Nama Bidang -> Simpan kunci. Klik dua kali kolom Kunci (atau "Edit kunci per nomor...")
-   untuk memperbaiki kunci per nomor soal (tampilan blok 30 nomor seperti LJK, tombol Buka PDF sumber).
+2. **Kunci jawaban** (menu di sidebar, di bawah daftar event): kunci disimpan sebagai **paket** (mis.
+   "FSN PROVINSI PAKET 1") yang bisa dipakai banyak event. Susunannya seperti aplikasi LJK lama: daftar
+   **Paket kunci** (Tambah / Ubah nama / Hapus), **Mata pelajaran** paket terpilih (Impor PDF dari folder
+   pembahasan, Impor Excel, Tambah, Edit kunci, Hapus), **Kode naskah** mata pelajaran terpilih (boleh lebih
+   dari satu; satu kode hanya milik satu mata pelajaran di paket itu), dan di kanan urutan kunci 1..N
+   (bulatan A-E). Edit kunci membuka editor per nomor (blok 30 nomor, tombol Buka PDF sumber). Semua
+   perubahan langsung tersimpan dan **langsung mengubah nilai semua event yang memakai paket itu**
+   (dikonfirmasi dulu bila paket sudah dipakai event). Mata pelajaran yang kuncinya belum lengkap
+   (ada nomor tanpa A-E) belum dipakai menilai.
+   Di tab **Kunci jawaban** event: paket yang dipakai, daftar kode naskahnya beserta jumlah lembar per kode,
+   **Ganti paket**, dan kode naskah server/lembar yang belum ada di paket. Event yang dibuat sebelum ada paket
+   tetap memakai kunci lamanya sampai memilih paket (kunci lama tidak dihapus).
 3. **Scan & nilai** (cek manual ada di sini juga): **Tambah foto** (kanan atas; pilih foto atau satu
-   folder) -> diproses otomatis. Kartu **Semua / Perlu cek / Gagal / Sudah dicek / OK** menghitung lembar
+   folder) -> bila event belum memakai paket kunci, panitia diminta **memilih paket dulu** (kolom *Cocok*
+   membandingkan kode naskah paket dengan kode di server/lembar event); setelah itu foto diproses otomatis. Kartu **Semua / Perlu cek / Gagal / Sudah dicek / OK** menghitung lembar
    sekaligus menyaring antrean di kiri (nama, nilai, catatan pertama; urut nomor, nilai, atau kode naskah).
    Kalimat di bawah nama event menyebut berapa lembar siap diekspor dan apa yang masih menahan.
    Pilih lembar di antrean -> gambar cek & data tampil di kanan. Soal yang ragu/ganda muncul di kotak

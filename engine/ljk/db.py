@@ -1,9 +1,29 @@
-"""Penyimpanan data aplikasi (SQLite): event, kunci per kode naskah, dan lembar LJK."""
+"""Penyimpanan data aplikasi (SQLite): event, paket kunci jawaban, dan lembar LJK.
+
+Kunci jawaban disimpan di PAKET (mis. "FSN PROVINSI PAKET 1") yang dipakai bersama oleh banyak event:
+paket -> mata pelajaran (nama + kunci) -> kode naskah (satu mata pelajaran boleh punya beberapa kode,
+satu kode hanya milik satu mata pelajaran di paket itu). Event memilih satu paket (event.paket_id);
+mengubah kunci di paket langsung mengubah nilai semua event yang memakainya.
+Tabel `naskah` (kunci per event, versi sebelum ada paket) tetap dibaca untuk event lama yang belum
+memilih paket, tetapi tidak diisi lagi oleh aplikasi."""
 import json
 import sqlite3
 from pathlib import Path
 
 from .nilai import Soal
+
+LETTERS = "ABCDE"
+
+
+def kode_sort(k):
+    """Urutan kode naskah: angka menurut nilainya ('9' sebelum '10'), lalu kode berhuruf."""
+    return (0, int(k)) if k.isdigit() else (1, k)
+
+
+def kunci_lengkap(kunci):
+    """Kunci bisa dipakai menilai: tidak kosong dan semua isinya A-E (bukan '?' dari PDF yang tak terbaca)."""
+    return bool(kunci) and all(ch in LETTERS for ch in kunci)
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS event (
@@ -38,6 +58,25 @@ CREATE TABLE IF NOT EXISTS lembar (
     potongan TEXT DEFAULT '{}',
     UNIQUE(event_id, file)
 );
+CREATE TABLE IF NOT EXISTS paket (            -- paket kunci jawaban, dipakai bersama oleh banyak event
+    id INTEGER PRIMARY KEY,
+    nama TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    dibuat TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS mapel (            -- mata pelajaran di satu paket: nama + kunci
+    id INTEGER PRIMARY KEY,
+    paket_id INTEGER NOT NULL REFERENCES paket(id) ON DELETE CASCADE,
+    nama TEXT NOT NULL,
+    kunci TEXT NOT NULL DEFAULT '',
+    sumber TEXT DEFAULT '',        -- path PDF pembahasan asal kunci (bila diimpor dari PDF)
+    catatan TEXT DEFAULT ''        -- catatan impor PDF (mis. nomor yang kuncinya tidak ditemukan)
+);
+CREATE TABLE IF NOT EXISTS mapel_kode (       -- kode naskah milik mata pelajaran; unik di dalam satu paket
+    paket_id INTEGER NOT NULL REFERENCES paket(id) ON DELETE CASCADE,
+    mapel_id INTEGER NOT NULL REFERENCES mapel(id) ON DELETE CASCADE,
+    kode TEXT NOT NULL,
+    PRIMARY KEY (paket_id, kode)
+);
 CREATE TABLE IF NOT EXISTS label_bulatan (    -- label panitia per bulatan (layar Latih Model)
     file TEXT NOT NULL,            -- path foto (sama dengan lembar.file)
     idx INTEGER NOT NULL,          -- indeks bulatan (urutan template.BUBBLES)
@@ -62,7 +101,8 @@ class DB:
         # Kolom sinkron server (LJK Reader Online), ditambahkan ke database lama bila belum ada
         self._add_columns("event", {"server_kompetisi_id": "INTEGER", "server_url": "TEXT DEFAULT ''",
                                     "server_bidang": "TEXT DEFAULT '[]'",
-                                    "kontras": "TEXT DEFAULT 'standar'"})   # normalisasi kontras baca
+                                    "kontras": "TEXT DEFAULT 'standar'",    # normalisasi kontras baca
+                                    "paket_id": "INTEGER"})                 # paket kunci jawaban yang dipakai
         self._add_columns("lembar", {"server_id": "INTEGER", "server": "TEXT DEFAULT '{}'",
                                      "server_dicek": "INTEGER DEFAULT 0"})
 
@@ -129,11 +169,130 @@ class DB:
         with self.con:
             self.con.execute("DELETE FROM event WHERE id=?", (event_id,))
 
-    # ---- kunci
+    # ---- kunci yang dipakai event
     def naskah(self, event_id):
+        """Kunci per kode naskah yang dipakai menilai lembar event ini: dari paket yang dipilih event; event lama
+        yang belum memilih paket memakai kunci per event versi sebelumnya. Kode yang kuncinya belum lengkap
+        (masih ada nomor tanpa kunci A-E) tidak ikut, jadi lembarnya belum dinilai."""
+        ev = self.event(event_id)
+        if ev is not None and ev["paket_id"] is not None and self.paket(ev["paket_id"]) is not None:
+            return [s for s in self.paket_naskah(ev["paket_id"]) if kunci_lengkap(s.kunci)]
+        return self.naskah_lama(event_id)
+
+    def naskah_lama(self, event_id):
+        """Kunci yang tersimpan langsung di event (sebelum ada paket kunci)."""
         rows = self.con.execute("SELECT kode, bidang, kunci, sumber FROM naskah WHERE event_id=? ORDER BY kode",
                                 (event_id,)).fetchall()
         return [Soal(r["kode"], r["bidang"], r["kunci"], r["sumber"] or "") for r in rows]
+
+    def set_event_paket(self, event_id, paket_id):
+        with self.con:
+            self.con.execute("UPDATE event SET paket_id=? WHERE id=?", (paket_id, event_id))
+
+    def event_paket(self, event_id):
+        """Paket kunci yang dipakai event, atau None."""
+        ev = self.event(event_id)
+        return self.paket(ev["paket_id"]) if ev is not None and ev["paket_id"] is not None else None
+
+    # ---- paket kunci jawaban
+    def pakets(self):
+        """Semua paket + jumlah mata pelajaran & event pemakai, urut nama."""
+        return self.con.execute(
+            """SELECT p.id, p.nama, p.dibuat,
+                      (SELECT COUNT(*) FROM mapel m WHERE m.paket_id = p.id) AS n_mapel,
+                      (SELECT COUNT(*) FROM mapel_kode k WHERE k.paket_id = p.id) AS n_kode,
+                      (SELECT COUNT(*) FROM event e WHERE e.paket_id = p.id) AS n_event
+               FROM paket p ORDER BY p.nama COLLATE NOCASE""").fetchall()
+
+    def paket(self, paket_id):
+        return self.con.execute("SELECT * FROM paket WHERE id=?", (paket_id,)).fetchone()
+
+    def paket_by_nama(self, nama):
+        return self.con.execute("SELECT * FROM paket WHERE nama=? COLLATE NOCASE", (nama.strip(),)).fetchone()
+
+    def add_paket(self, nama):
+        """Paket baru; sqlite3.IntegrityError bila namanya sudah dipakai."""
+        with self.con:
+            return self.con.execute("INSERT INTO paket(nama) VALUES (?)", (nama.strip(),)).lastrowid
+
+    def rename_paket(self, paket_id, nama):
+        with self.con:
+            self.con.execute("UPDATE paket SET nama=? WHERE id=?", (nama.strip(), paket_id))
+
+    def delete_paket(self, paket_id):
+        """Hapus paket beserta mata pelajaran & kode naskahnya; event pemakainya kembali tanpa paket."""
+        with self.con:
+            self.con.execute("UPDATE event SET paket_id=NULL WHERE paket_id=?", (paket_id,))
+            self.con.execute("DELETE FROM paket WHERE id=?", (paket_id,))
+
+    def paket_events(self, paket_id):
+        """Event yang memakai paket ini (urut nama)."""
+        return self.con.execute("SELECT id, nama, tanggal FROM event WHERE paket_id=? ORDER BY nama COLLATE NOCASE",
+                                (paket_id,)).fetchall()
+
+    def mapel(self, paket_id):
+        """Mata pelajaran di paket: [{id, nama, kunci, sumber, catatan, kode: [..]}], urut kode naskah terkecil
+        (mata pelajaran tanpa kode di akhir, urut nama)."""
+        kode = {}
+        for r in self.con.execute("SELECT mapel_id, kode FROM mapel_kode WHERE paket_id=?", (paket_id,)):
+            kode.setdefault(r["mapel_id"], []).append(r["kode"])
+        out = []
+        for r in self.con.execute("SELECT * FROM mapel WHERE paket_id=?", (paket_id,)):
+            ks = sorted(kode.get(r["id"], []), key=kode_sort)
+            out.append({"id": r["id"], "nama": r["nama"], "kunci": r["kunci"], "sumber": r["sumber"] or "",
+                        "catatan": r["catatan"] or "", "kode": ks})
+        out.sort(key=lambda m: (not m["kode"], kode_sort(m["kode"][0]) if m["kode"] else (0, 0), m["nama"].casefold()))
+        return out
+
+    def mapel_by_id(self, mapel_id):
+        return self.con.execute("SELECT * FROM mapel WHERE id=?", (mapel_id,)).fetchone()
+
+    def add_mapel(self, paket_id, nama, kunci, sumber="", catatan=""):
+        with self.con:
+            return self.con.execute("INSERT INTO mapel(paket_id, nama, kunci, sumber, catatan) VALUES (?, ?, ?, ?, ?)",
+                                    (paket_id, nama.strip(), kunci, sumber, catatan)).lastrowid
+
+    def update_mapel(self, mapel_id, nama, kunci, sumber=None, catatan=None):
+        """Ubah nama & kunci (sumber/catatan hanya bila diberikan; catatan impor dihapus saat kunci diedit manual)."""
+        sets, args = ["nama=?", "kunci=?"], [nama.strip(), kunci]
+        if sumber is not None:
+            sets.append("sumber=?")
+            args.append(sumber)
+        if catatan is not None:
+            sets.append("catatan=?")
+            args.append(catatan)
+        with self.con:
+            self.con.execute(f"UPDATE mapel SET {', '.join(sets)} WHERE id=?", (*args, mapel_id))
+
+    def delete_mapel(self, mapel_id):
+        with self.con:
+            self.con.execute("DELETE FROM mapel WHERE id=?", (mapel_id,))
+
+    def kode_owner(self, paket_id, kode):
+        """Mata pelajaran pemilik kode naskah ini di paket, atau None."""
+        return self.con.execute("SELECT m.* FROM mapel_kode k JOIN mapel m ON m.id = k.mapel_id "
+                                "WHERE k.paket_id=? AND k.kode=?", (paket_id, kode.strip())).fetchone()
+
+    def add_kode(self, paket_id, mapel_id, kode):
+        """Tambah kode naskah ke mata pelajaran; sqlite3.IntegrityError bila kode sudah dipakai di paket ini."""
+        with self.con:
+            self.con.execute("INSERT INTO mapel_kode(paket_id, mapel_id, kode) VALUES (?, ?, ?)",
+                             (paket_id, mapel_id, kode.strip()))
+
+    def rename_kode(self, paket_id, old, new):
+        with self.con:
+            self.con.execute("UPDATE mapel_kode SET kode=? WHERE paket_id=? AND kode=?", (new.strip(), paket_id, old))
+
+    def delete_kode(self, paket_id, kode):
+        with self.con:
+            self.con.execute("DELETE FROM mapel_kode WHERE paket_id=? AND kode=?", (paket_id, kode))
+
+    def paket_naskah(self, paket_id):
+        """Semua kode naskah paket sebagai Soal(kode, nama mata pelajaran, kunci, sumber), urut kode."""
+        rows = self.con.execute("SELECT k.kode, m.nama, m.kunci, m.sumber FROM mapel_kode k "
+                                "JOIN mapel m ON m.id = k.mapel_id WHERE k.paket_id=?", (paket_id,)).fetchall()
+        out = [Soal(r["kode"], r["nama"], r["kunci"], r["sumber"] or "") for r in rows]
+        return sorted(out, key=lambda s: kode_sort(s.kode))
 
     def set_naskah(self, event_id, soal_list):
         with self.con:
