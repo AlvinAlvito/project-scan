@@ -269,12 +269,13 @@ def pilih_paket(parent, db, event_id, pesan=""):
     if pid == ev["paket_id"]:
         return None
     n = len(db.lembar(event_id))
-    if ev["paket_id"] is not None and n and QMessageBox.question(
+    if n and QMessageBox.question(
             parent, "Ganti paket kunci",
-            f"Nilai {n} lembar di event {ev['nama']} akan dihitung ulang dengan paket "
+            f"Nilai {n} lembar di event {ev['nama']} akan dihitung ulang dengan kunci paket "
             f"{db.paket(pid)['nama']}. Lanjutkan?") != QMessageBox.Yes:
         return None
     db.set_event_paket(event_id, pid)
+    db.hitung_ulang(event_id)           # ganti paket = sengaja memakai kunci paket baru untuk semua lembar
     return "dipilih"
 
 
@@ -587,7 +588,8 @@ class PaketPage(QWidget):
         return p["nama"] if p else ""
 
     def _boleh_ubah(self, aksi):
-        """Paket dipakai event: perubahan kunci/kode ikut mengubah nilai event itu. Minta persetujuan."""
+        """Paket dipakai event: beri tahu bahwa lembar yang sudah di-scan tetap memakai kunci saat di-scan
+        (nilai beku); perubahan berlaku untuk scan berikutnya atau lewat Hitung ulang. Minta persetujuan."""
         evs = [e["nama"] for e in self.db.paket_events(self.paket_id)]
         if not evs:
             return True
@@ -595,7 +597,9 @@ class PaketPage(QWidget):
         return QMessageBox.question(
             self, "Paket dipakai event",
             f"{aksi}\n\nPaket {self._paket_nama()} dipakai {len(evs)} event: {daftar}.\n"
-            "Nilai lembar di event tersebut akan ikut berubah. Lanjutkan?") == QMessageBox.Yes
+            "Lembar yang sudah di-scan tetap dinilai dengan kunci saat di-scan; perubahan ini berlaku untuk lembar "
+            "yang di-scan sesudahnya. Untuk memakai kunci baru pada lembar lama, tekan Hitung ulang di menu "
+            "Nilai hasil.\n\nLanjutkan?") == QMessageBox.Yes
 
     def _ask_text(self, title, label, text="", placeholder=""):
         d = QInputDialog(self)
@@ -693,7 +697,7 @@ class PaketPage(QWidget):
                                 f"Hapus {m['nama']} beserta kode naskahnya ({ringkas_kode(m['kode']) or 'tanpa kode'}) "
                                 f"dari paket {self._paket_nama()}?") != QMessageBox.Yes:
             return
-        if m["kode"] and not self._boleh_ubah(f"Lembar berkode {ringkas_kode(m['kode'])} tidak akan dinilai lagi."):
+        if m["kode"] and not self._boleh_ubah(f"{m['nama']} (kode {ringkas_kode(m['kode'])}) dihapus dari paket."):
             return
         self.db.delete_mapel(m["id"])
         self.mapel_id = None
@@ -757,7 +761,7 @@ class PaketPage(QWidget):
         if QMessageBox.question(self, "Hapus kode naskah",
                                 f"Hapus kode naskah {kode} dari {m['nama']}?") != QMessageBox.Yes:
             return
-        if not self._boleh_ubah(f"Lembar berkode {kode} tidak akan dinilai lagi."):
+        if not self._boleh_ubah(f"Kode naskah {kode} dihapus dari {m['nama']}."):
             return
         self.db.delete_kode(self.paket_id, kode)
         self._done(m["id"])

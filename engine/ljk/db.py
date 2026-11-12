@@ -2,12 +2,18 @@
 
 Kunci jawaban disimpan di PAKET (mis. "FSN PROVINSI PAKET 1") yang dipakai bersama oleh banyak event:
 paket -> mata pelajaran (nama + kunci) -> kode naskah (satu mata pelajaran boleh punya beberapa kode,
-satu kode hanya milik satu mata pelajaran di paket itu). Event memilih satu paket (event.paket_id);
-mengubah kunci di paket langsung mengubah nilai semua event yang memakainya.
+satu kode hanya milik satu mata pelajaran di paket itu). Event memilih satu paket (event.paket_id).
+
+Nilai BEKU: setiap lembar menyimpan kunci mata pelajarannya saat pertama kali di-scan (lembar.soal_beku),
+jadi mengedit kunci paket tidak mengubah nilai lembar yang sudah ada. Proses ulang tetap memakai kunci itu.
+Kunci lembar hanya diganti dengan sengaja: hitung_ulang() (menu Nilai hasil), ganti paket event, atau kode
+naskah lembar dikoreksi di panel cek (kunci kode baru diambil saat disimpan). Lembar yang kodenya belum ada
+di kunci saat di-scan dibekukan begitu kuncinya tersedia (bekukan_belum).
 Tabel `naskah` (kunci per event, versi sebelum ada paket) tetap dibaca untuk event lama yang belum
 memilih paket, tetapi tidak diisi lagi oleh aplikasi."""
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from .nilai import Soal
@@ -18,6 +24,30 @@ LETTERS = "ABCDE"
 def kode_sort(k):
     """Urutan kode naskah: angka menurut nilainya ('9' sebelum '10'), lalu kode berhuruf."""
     return (0, int(k)) if k.isdigit() else (1, k)
+
+
+def beku_json(soal):
+    """Kunci satu kode naskah untuk disimpan di lembar.soal_beku (None bila kodenya tidak punya kunci)."""
+    if soal is None:
+        return None
+    return json.dumps({"kode": soal.kode, "bidang": soal.bidang, "kunci": soal.kunci, "sumber": soal.sumber})
+
+
+def soal_beku(beku, kode):
+    """Soal dari lembar.soal_beku bila kodenya sama dengan kode lembar sekarang, selain itu None."""
+    if not beku:
+        return None
+    try:
+        d = json.loads(beku)
+    except ValueError:
+        return None
+    if d.get("kode") != kode or not d.get("kunci"):
+        return None
+    return Soal(d["kode"], d.get("bidang", ""), d["kunci"], d.get("sumber", ""))
+
+
+def sekarang():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def kunci_lengkap(kunci):
@@ -104,7 +134,11 @@ class DB:
                                     "kontras": "TEXT DEFAULT 'standar'",    # normalisasi kontras baca
                                     "paket_id": "INTEGER"})                 # paket kunci jawaban yang dipakai
         self._add_columns("lembar", {"server_id": "INTEGER", "server": "TEXT DEFAULT '{}'",
-                                     "server_dicek": "INTEGER DEFAULT 0"})
+                                     "server_dicek": "INTEGER DEFAULT 0",
+                                     "soal_beku": "TEXT",              # kunci saat di-scan (JSON), lihat docstring
+                                     "dipindai": "TEXT DEFAULT ''"})   # waktu pertama kali di-scan (Tgl. Periksa)
+        # lembar dari versi sebelum nilai beku: dibekukan dengan kunci yang berlaku sekarang
+        self.bekukan_belum()
 
     def _add_columns(self, table, cols):
         have = {r["name"] for r in self.con.execute(f"PRAGMA table_info({table})")}
@@ -315,16 +349,69 @@ class DB:
         r = self.con.execute("SELECT COALESCE(MAX(urutan), 0) FROM lembar WHERE event_id=?", (event_id,)).fetchone()
         return r[0] + 1
 
+    def _beku_baru(self, event_id, kode):
+        """Kunci yang berlaku sekarang untuk kode ini di event (JSON untuk soal_beku), atau None."""
+        return beku_json({s.kode: s for s in self.naskah(event_id)}.get(kode))
+
     def add_lembar(self, event_id, urutan, rec):
+        """Simpan hasil baca. Lembar yang dibaca ulang (file sama) tetap memakai kunci & waktu scan pertamanya
+        selama kode naskahnya sama; lembar baru dibekukan dengan kunci yang berlaku sekarang."""
+        old = self.con.execute("SELECT soal_beku, dipindai FROM lembar WHERE event_id=? AND file=?",
+                               (event_id, rec["file"])).fetchone()
+        kode = rec.get("kode", "")
+        beku = old["soal_beku"] if old is not None else None
+        if not rec.get("error") and soal_beku(beku, kode) is None:
+            beku = self._beku_baru(event_id, kode)
+        # waktu scan pertama tidak berubah saat dibaca ulang (lembar dari versi lama tetap kosong)
+        dipindai = (old["dipindai"] or "") if old is not None else sekarang()
         with self.con:
             self.con.execute(
                 """INSERT OR REPLACE INTO lembar(event_id, urutan, file, error, nama, nomor, kode, tanggal,
-                   jawaban, baca, dicek, gambar, potongan, server_id, server, server_dicek)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,0)""",
+                   jawaban, baca, dicek, gambar, potongan, server_id, server, server_dicek, soal_beku, dipindai)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,0,?,?)""",
                 (event_id, urutan, rec["file"], rec.get("error", ""), rec.get("nama", ""), rec.get("nomor", ""),
-                 rec.get("kode", ""), rec.get("tanggal", ""), json.dumps(rec.get("jawaban", [])),
+                 kode, rec.get("tanggal", ""), json.dumps(rec.get("jawaban", [])),
                  json.dumps(rec.get("baca", {})), rec.get("gambar", ""), json.dumps(rec.get("potongan", {})),
-                 rec.get("server_id"), json.dumps(rec.get("server") or {})))
+                 rec.get("server_id"), json.dumps(rec.get("server") or {}), beku, dipindai))
+
+    # ---- nilai beku
+    def bekukan_belum(self, event_id=None):
+        """Bekukan lembar yang belum punya kunci beku (kodenya belum ada di kunci saat di-scan, atau lembar dari
+        versi sebelum nilai beku) dengan kunci yang berlaku sekarang. Mengembalikan jumlah lembar."""
+        ids = [event_id] if event_id is not None else [e["id"] for e in self.events()]
+        n = 0
+        for eid in ids:
+            rows = self.con.execute("SELECT id, kode FROM lembar WHERE event_id=? AND soal_beku IS NULL "
+                                    "AND COALESCE(error, '') = ''", (eid,)).fetchall()
+            if not rows:
+                continue
+            naskah = {s.kode: s for s in self.naskah(eid)}
+            upd = [(beku_json(naskah[r["kode"]]), r["id"]) for r in rows if r["kode"] in naskah]
+            if upd:
+                with self.con:
+                    self.con.executemany("UPDATE lembar SET soal_beku=? WHERE id=?", upd)
+                n += len(upd)
+        return n
+
+    def hitung_ulang(self, event_id, kodes=None):
+        """Ganti kunci beku lembar event (semua, atau hanya kode naskah di `kodes`) dengan kunci yang berlaku
+        sekarang. Mengembalikan jumlah lembar yang kuncinya berubah."""
+        naskah = {s.kode: s for s in self.naskah(event_id)}
+        rows = self.con.execute("SELECT id, kode, soal_beku FROM lembar WHERE event_id=?", (event_id,)).fetchall()
+        upd = []
+        for r in rows:
+            if kodes is not None and r["kode"] not in kodes:
+                continue
+            baru = beku_json(naskah.get(r["kode"]))
+            lama = soal_beku(r["soal_beku"], r["kode"])
+            now = naskah.get(r["kode"])
+            beda = (lama is None) != (now is None) or (lama is not None and (lama.kunci, lama.bidang) != (now.kunci, now.bidang))
+            if beda or (r["soal_beku"] is not None and baru is None):
+                upd.append((baru, r["id"]))
+        if upd:
+            with self.con:
+                self.con.executemany("UPDATE lembar SET soal_beku=? WHERE id=?", upd)
+        return len(upd)
 
     # ---- sinkron server
     def server_ids(self, event_id):
@@ -343,9 +430,16 @@ class DB:
                                  [(event_id, i) for i in server_ids])
 
     def save_review(self, lembar_id, nama, nomor, kode, tanggal, jawaban, dicek=True):
+        """Simpan hasil cek manual. Kode naskah dikoreksi (atau lembar belum punya kunci beku): kunci kode itu
+        yang berlaku sekarang dibekukan; kode sama: kunci beku lembar tidak berubah."""
+        row = self.lembar_by_id(lembar_id)
+        beku = row["soal_beku"] if row is not None else None
+        if row is not None and soal_beku(beku, kode) is None:
+            beku = self._beku_baru(row["event_id"], kode)
         with self.con:
-            self.con.execute("UPDATE lembar SET nama=?, nomor=?, kode=?, tanggal=?, jawaban=?, dicek=?, server_dicek=0 "
-                             "WHERE id=?", (nama, nomor, kode, tanggal, json.dumps(jawaban), int(dicek), lembar_id))
+            self.con.execute("UPDATE lembar SET nama=?, nomor=?, kode=?, tanggal=?, jawaban=?, dicek=?, server_dicek=0, "
+                             "soal_beku=? WHERE id=?",
+                             (nama, nomor, kode, tanggal, json.dumps(jawaban), int(dicek), beku, lembar_id))
 
     def rebase_paths(self, old, new):
         """Ganti awalan path gambar & potongan (dipakai saat folder data dipindah)."""

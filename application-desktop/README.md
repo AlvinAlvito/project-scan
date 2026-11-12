@@ -75,15 +75,20 @@ tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampil
 
 1. **Event** (panel kiri): **+** -> isi nama event & tanggal. Menu **⋯** di samping judul "Event" berisi
    ambil kompetisi dari server, kirim event ke server, ubah, dan hapus event.
-2. **Kunci jawaban** (menu di sidebar, di bawah daftar event): kunci disimpan sebagai **paket** (mis.
+2. **Kunci jawaban** (sidebar, kelompok *Menu* di bawah daftar event): kunci disimpan sebagai **paket** (mis.
    "FSN PROVINSI PAKET 1") yang bisa dipakai banyak event. Susunannya seperti aplikasi LJK lama: daftar
    **Paket kunci** (Tambah / Ubah nama / Hapus), **Mata pelajaran** paket terpilih (Impor PDF dari folder
    pembahasan, Impor Excel, Tambah, Edit kunci, Hapus), **Kode naskah** mata pelajaran terpilih (boleh lebih
    dari satu; satu kode hanya milik satu mata pelajaran di paket itu), dan di kanan urutan kunci 1..N
    (bulatan A-E). Edit kunci membuka editor per nomor (blok 30 nomor, tombol Buka PDF sumber). Semua
-   perubahan langsung tersimpan dan **langsung mengubah nilai semua event yang memakai paket itu**
-   (dikonfirmasi dulu bila paket sudah dipakai event). Mata pelajaran yang kuncinya belum lengkap
-   (ada nomor tanpa A-E) belum dipakai menilai.
+   perubahan langsung tersimpan. Mata pelajaran yang kuncinya belum lengkap (ada nomor tanpa A-E) belum
+   dipakai menilai.
+   **Nilai beku**: setiap lembar menyimpan kunci mata pelajarannya saat pertama kali di-scan, jadi mengedit
+   kunci paket **tidak** mengubah nilai lembar yang sudah ada (hanya lembar yang di-scan sesudahnya). Proses
+   ulang / ganti Kontras baca tetap memakai kunci scan pertama. Kunci lembar lama hanya diganti dengan sengaja:
+   **Hitung ulang** di menu Nilai hasil, **Ganti paket** event, atau kode naskah dikoreksi di panel cek (kunci
+   kode baru diambil saat disimpan). Lembar yang kodenya belum ada di kunci saat di-scan dibekukan begitu
+   kodenya ditambahkan ke paket.
    Di tab **Kunci jawaban** event: paket yang dipakai, daftar kode naskahnya beserta jumlah lembar per kode,
    **Ganti paket**, dan kode naskah server/lembar yang belum ada di paket. Event yang dibuat sebelum ada paket
    tetap memakai kunci lamanya sampai memilih paket (kunci lama tidak dihapus).
@@ -100,6 +105,16 @@ tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampil
    proses ulang / hapus lembar terpilih. Tombol **Hitam-putih** (di samping zoom) memperjelas isian tipis;
    kontrasnya bisa digeser. Mengganti **Kontras baca** (kanan atas) menawarkan baca ulang lembar yang belum
    dicek. **Ekspor nilai** di kanan atas.
+4. **Nilai hasil** (sidebar, kelompok *Menu*): kiri atas daftar event, kanan atas mata pelajaran event terpilih
+   (semua mata pelajaran paketnya, dengan kode naskah, jumlah soal, peserta, rata-rata; plus *Belum dinilai*
+   untuk lembar gagal / kode tak terdaftar), bawah tabel peserta: No, Tgl. periksa (waktu scan pertama; lembar
+   dari sebelum fitur ini kosong), nomor, nama, nilai, B/S/K, kode naskah, status (*Perlu cek* = nilai sementara,
+   *kunci lama* = kunci bekunya berbeda dari paket), jawaban, dan kunci. Kolom bisa diurutkan; klik dua kali
+   peserta membuka lembarnya di panel cek. **Cetak nilai**: peserta terpilih (Ctrl/Shift+klik) dibandingkan
+   dengan kunci, jawaban biru = benar, merah = salah, "-" = kosong, plus nilai (Benar/Salah/Kosong); muncul
+   pratinjau (A4 mendatar) untuk printer atau **Simpan PDF**. **Ekspor Excel**: format Daftar Nilai untuk mata
+   pelajaran terpilih, atau semua pelajaran dalam 1 file. **Hitung ulang**: ganti kunci beku lembar mata pelajaran
+   ini / seluruh event dengan kunci paket terbaru.
 
 ## Menarik LJK dari server (LJK Reader Online)
 

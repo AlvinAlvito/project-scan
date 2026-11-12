@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from . import belajar as BL
+from . import db as DBM
 from . import export as EX
 from . import nilai as NI
 from . import omr as OM
@@ -169,6 +170,17 @@ class SheetView:
     soal: object = None         # NI.Soal atau None
     skor: object = None         # NI.Skor atau None
     issues: list = field(default_factory=list)   # [{"text", "key", "x", "y"}]
+    kunci_lama: bool = False    # kunci beku lembar berbeda dengan kunci yang berlaku sekarang (perlu hitung ulang?)
+
+
+def soal_lembar(row, naskah):
+    """Kunci untuk menilai lembar: kunci beku saat di-scan (bila kodenya sama dengan kode lembar), selain itu
+    kunci yang berlaku sekarang untuk kode itu (lembar yang belum dibekukan). naskah: {kode: Soal}."""
+    try:
+        beku = row["soal_beku"]
+    except (IndexError, KeyError):
+        beku = None
+    return DBM.soal_beku(beku, row["kode"]) or naskah.get(row["kode"])
 
 
 def _blok_mulai(text):
@@ -225,7 +237,9 @@ def sheet_view(row, naskah, dup):
     baca = json.loads(row["baca"] or "{}")
     jawaban = json.loads(row["jawaban"] or "[]")
     issues = [] if row["dicek"] else list(baca.get("issues", []))
-    soal = naskah.get(row["kode"])
+    soal = soal_lembar(row, naskah)
+    now = naskah.get(row["kode"])
+    kunci_lama = soal is not None and now is not None and soal.kunci != now.kunci
     skor = None
     if soal is None:
         issues.insert(0, {"text": f"kode naskah '{row['kode']}' belum terdaftar di kunci event ini",
@@ -251,7 +265,7 @@ def sheet_view(row, naskah, dup):
         status = "Perlu cek"
     else:
         status = "Sudah dicek" if row["dicek"] else "OK"
-    return SheetView(row, status, soal, skor, issues)
+    return SheetView(row, status, soal, skor, issues, kunci_lama)
 
 
 def event_views(db, event_id):
@@ -274,12 +288,14 @@ def export_event(db, event_id, path):
     sheet mengikuti kode naskah terkecil, urutan peserta = urutan scan."""
     ev = db.event(event_id)
     views = event_views(db, event_id)
+    naskah = {s.kode: s for s in db.naskah(event_id)}
     groups, first_kode, skipped = {}, {}, []
     for v in views:
         if v.skor is None:
             skipped.append(v)
             continue
-        b = v.soal.bidang
+        # nama sheet = nama mata pelajaran sekarang (bisa sudah diganti di paket); nilai tetap dari kunci beku
+        b = naskah[v.soal.kode].bidang if v.soal.kode in naskah else v.soal.bidang
         groups.setdefault(b, []).append((v.row["nomor"], v.row["nama"], v.skor))
         first_kode[b] = min(first_kode.get(b, v.soal.kode), v.soal.kode, key=kode_sort)
     ordered = [(b, groups[b]) for b in sorted(groups, key=lambda b: kode_sort(first_kode[b]))]

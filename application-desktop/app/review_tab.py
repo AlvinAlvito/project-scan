@@ -13,6 +13,7 @@ from app import theme
 from app.colors import paint
 from app.imageview import ImageView
 from app.widgets import EmptyState, ToolbarFit, badge, divider, set_badge, setup_table, toolbar
+from ljk import db as DBM
 from ljk import nilai as NI
 from ljk import service as SV
 from ljk import tampilan as TP
@@ -567,7 +568,13 @@ class ReviewTab(QWidget):
         self.dirty_badge.setVisible(self.dirty)
 
     def _soal(self):
+        """Kunci untuk kode naskah yang sedang diisi: kunci beku lembar ini bila kodenya sama (nilai beku saat
+        scan), selain itu kunci yang berlaku sekarang (yang akan dibekukan saat lembar disimpan)."""
         kode = self.f_kode.currentText().strip()
+        if self.cur is not None:
+            beku = DBM.soal_beku(self.cur["soal_beku"], kode)
+            if beku is not None:
+                return beku
         for s in self.db.naskah(self.event_id):
             if s.kode == kode:
                 return s

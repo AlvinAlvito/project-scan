@@ -101,7 +101,7 @@ def main():
     moved_from = migrate(d)
     BL.set_model_dir(d / "model")      # model juri kedua (bila ada yang lulus ujian)
     w = MainWindow(DB(d / "ljk.db"), d)
-    w.show()
+    w.showMaximized()           # langsung memenuhi layar; tombol "Restore" kembali ke ukuran 1440x880
     if moved_from is not None:
         QTimer.singleShot(300, lambda: QMessageBox.information(
             w, "LJK Reader", f"Data aplikasi sekarang disimpan di:\n{d}\n\n"
