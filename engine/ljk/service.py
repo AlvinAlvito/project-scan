@@ -189,6 +189,54 @@ def _blok_mulai(text):
     return int(m.group(1)) if m else 0
 
 
+TANPA_CATATAN = ("nama", "tanggal")      # kolom yang salah isi bulatannya tidak dilaporkan (keputusan panitia)
+
+
+def catatan_kepala_disembunyikan(i):
+    """Catatan isi bulatan / pelurusan blok kolom nama & tanggal ujian: tidak ditampilkan dan tidak membuat
+    lembar 'Perlu cek'. Nama yang ragu ditandai di kotak Nama panel cek (lihat nama_ragu)."""
+    key = str(i.get("key", ""))
+    if key.split(":", 1)[0] in TANPA_CATATAN:
+        return True
+    return key == "foto" and str(i.get("text", "")).split(":", 1)[0].strip() in TANPA_CATATAN
+
+
+def saring_catatan(issues, soal):
+    """Catatan baca yang perlu dicek: tanpa catatan kolom nama & tanggal ujian, dan (bila kunci `soal` diketahui)
+    hanya sampai soal terakhir kunci. Catatan soal sesudahnya dan catatan pelurusan blok jawaban yang seluruhnya
+    sesudah soal terakhir dibuang (tidak dinilai; biasanya hanya bayangan di bagian kertas yang tidak dipakai).
+    Catatan nomor peserta, kode naskah, dan lembar jawaban tetap ada."""
+    out = []
+    for i in issues:
+        if catatan_kepala_disembunyikan(i):
+            continue
+        key = str(i.get("key", ""))
+        if soal is not None and key.startswith("soal:") and int(key.split(":")[1]) > soal.jumlah:
+            continue
+        if soal is not None and key == "foto" and _blok_mulai(i["text"]) > soal.jumlah:
+            continue
+        out.append(i)
+    return out
+
+
+def nama_ragu(baca):
+    """Kolom nama yang isian bulatannya ragu/ganda menurut hasil baca: [(nomor kolom mulai 1, catatan)]."""
+    out = []
+    for h in (baca.get("header") or {}).get("nama", []):
+        if h.get("kind") in ("ragu", "ganda"):
+            out.append((h.get("col", 0) + 1, h.get("note") or h.get("kind")))
+    return out
+
+
+def info_lebih(skor, soal):
+    """Info (bukan catatan perlu cek): ada beberapa isian tepat setelah soal terakhir kunci. Tidak dinilai, tetapi
+    bila banyak bisa tanda kode naskah salah. None bila tidak ada."""
+    if skor is None or not skor.lebih:
+        return None
+    return (f"Info: ada isian di soal {skor.lebih[0]}-{skor.lebih[-1]}, setelah soal terakhir kunci ({soal.jumlah}). "
+            "Tidak dinilai; bila peserta memang menjawab sebanyak itu, periksa kode naskahnya.")
+
+
 def duplicate_nomor(rows):
     c = Counter(r["nomor"] for r in rows if not r["error"] and r["nomor"])
     return {n for n, k in c.items() if k > 1}
@@ -241,23 +289,21 @@ def sheet_view(row, naskah, dup):
     now = naskah.get(row["kode"])
     kunci_lama = soal is not None and now is not None and soal.kunci != now.kunci
     skor = None
+    # tanpa catatan kolom nama & tanggal; bila kunci diketahui, hanya sampai soal terakhir kunci
+    issues = saring_catatan(issues, soal)
     if soal is None:
-        issues.insert(0, {"text": f"kode naskah '{row['kode']}' belum terdaftar di kunci event ini",
+        issues.insert(0, {"text": f"kode naskah '{row['kode']}' tidak ada di paket kunci (salah isi?): "
+                                  "pilih kode naskah yang benar",
                           "key": "kode", "x": None, "y": None})
     else:
-        # Catatan ragu/ganda di soal setelah soal terakhir ujian tidak dinilai, jadi tidak perlu dicek
-        # (biasanya hanya bayangan di tepi bawah kertas).
-        issues = [i for i in issues if not (i.get("key", "").startswith("soal:")
-                                            and int(i["key"].split(":")[1]) > soal.jumlah)]
-        # Catatan pelurusan untuk blok jawaban yang seluruhnya setelah soal terakhir juga tidak dinilai.
-        issues = [i for i in issues if not (i.get("key") == "foto" and _blok_mulai(i["text"]) > soal.jumlah)]
+        # Yang dicek hanya sampai soal terakhir kunci: isian setelah soal terakhir (skor.lebih) tidak membuat
+        # lembar "Perlu cek"; panel cek tetap menampilkannya sebagai info (lihat info_lebih).
         skor = NI.nilai(jawaban, soal)
-        if skor.lebih:
-            issues.append({"text": skor.catatan[-1], "key": f"soal:{skor.lebih[0]}", "x": None, "y": None})
     if not row["dicek"]:
         issues += server_issues(row)
-    if row["dicek"] and any(ch in (row["nama"] + row["nomor"] + row["kode"]) for ch in "?_"):
-        issues.append({"text": "masih ada tanda ? atau _ di data peserta", "key": "kepala", "x": None, "y": None})
+    if row["dicek"] and any(ch in (row["nomor"] + row["kode"]) for ch in "?_"):
+        issues.append({"text": "masih ada tanda ? atau _ di nomor peserta / kode naskah", "key": "kepala",
+                       "x": None, "y": None})
     if row["nomor"] in dup:
         issues.append({"text": f"nomor peserta {row['nomor']} dipakai lebih dari satu lembar",
                        "key": "nomor", "x": None, "y": None})
@@ -266,6 +312,56 @@ def sheet_view(row, naskah, dup):
     else:
         status = "Sudah dicek" if row["dicek"] else "OK"
     return SheetView(row, status, soal, skor, issues, kunci_lama)
+
+
+BELUM = "belum"         # kunci kelompok lembar tanpa nilai (gagal dibaca / kode naskah tak terdaftar)
+
+
+def kelompok_bidang(db, event_id, views=None):
+    """Bidang (mata pelajaran) event menurut paket kuncinya, SEMUA bidang (termasuk yang belum ada lembarnya),
+    urut kode naskah, masing-masing dengan lembarnya: [{key, nama, kode, jumlah, views}]. Lembar tanpa nilai
+    (gagal dibaca / kode naskah tak terdaftar) dikumpulkan di kelompok BELUM paling akhir (hanya bila ada).
+    Event lama tanpa paket memakai kunci per event, dikelompokkan per nama bidang. Dipakai tab Scan & nilai
+    (dropdown Bidang) dan menu Nilai hasil, supaya pembagiannya selalu sama."""
+    views = event_views(db, event_id) if views is None else views
+    paket = db.event_paket(event_id)
+    groups, kode2g = [], {}
+    if paket is not None:
+        for m in db.mapel(paket["id"]):
+            g = {"key": ("m", m["id"]), "nama": m["nama"], "kode": list(m["kode"]), "jumlah": len(m["kunci"]),
+                 "views": []}
+            groups.append(g)
+            for k in m["kode"]:
+                kode2g[k] = g
+    else:
+        by = {}
+        for s in db.naskah_lama(event_id):
+            g = by.get(s.bidang.casefold())
+            if g is None:
+                g = by[s.bidang.casefold()] = {"key": ("b", s.bidang.casefold()), "nama": s.bidang, "kode": [],
+                                               "jumlah": s.jumlah, "views": []}
+                groups.append(g)
+            g["kode"].append(s.kode)
+            kode2g[s.kode] = g
+    belum = {"key": BELUM, "nama": "Tanpa bidang (gagal dibaca / kode tak terdaftar)", "kode": [], "jumlah": 0,
+             "views": []}
+    for v in views:
+        if v.skor is None:
+            belum["views"].append(v)
+            continue
+        g = kode2g.get(v.row["kode"])
+        if g is None:                       # kode sudah tidak ada di paket, tetapi lembarnya punya kunci beku
+            nama = v.soal.bidang
+            g = next((x for x in groups if x["nama"].casefold() == nama.casefold()), None)
+            if g is None:
+                g = {"key": ("x", nama.casefold()), "nama": nama, "kode": [], "jumlah": v.soal.jumlah, "views": []}
+                groups.append(g)
+            if v.row["kode"] not in g["kode"]:
+                g["kode"].append(v.row["kode"])
+        g["views"].append(v)
+    if belum["views"]:
+        groups.append(belum)
+    return groups
 
 
 def event_views(db, event_id):

@@ -157,6 +157,14 @@ QLineEdit:hover, QSpinBox:hover, QComboBox:hover { border-color: $faint; }
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus { border-color: $accent; }
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled { color: $faint; background: $surface2; }
 QComboBox { padding-right: 30px; }
+/* combo di dalam sel tabel (mis. kolom Jawaban panel cek): ringkas supaya isinya tetap terlihat di kolom sempit */
+QTableView QComboBox { padding: 1px 4px; padding-right: 14px; border-radius: 4px; min-height: 18px;
+    combobox-popup: 0; }  /* daftar pilihan turun utuh ke bawah (tidak ada pilihan yang tersembunyi di atas) */
+QTableView QComboBox::drop-down { width: 14px; }
+QTableView QComboBox QAbstractItemView { padding: 0px; }
+QTableView QComboBox QAbstractItemView::item { height: 26px; padding: 0 8px; }
+QTableView QComboBox::down-arrow { width: 11px; height: 11px; }
+QTableView#jawaban::item { padding: 0 4px; }
 QComboBox::drop-down { border: none; width: 28px; subcontrol-origin: padding; subcontrol-position: center right; }
 QComboBox::down-arrow { image: url("$arrow_down"); width: 14px; height: 14px; }
 QComboBox QAbstractItemView { background: $surface; border: 1px solid $border_strong; border-radius: 8px;

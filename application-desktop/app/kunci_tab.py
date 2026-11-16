@@ -12,12 +12,14 @@ from app import theme
 from app.colors import paint
 from app.paket_page import _item, kode_lembar, nomor_tanpa_kunci, pilih_paket, ringkas_kode
 from app.widgets import EmptyState, setup_table
+from ljk import service as SV
 from ljk.db import kode_sort, kunci_lengkap
 
 
 class KunciTab(QWidget):
     changed = Signal()              # paket event diganti: nilai lembar dihitung ulang
     buka_paket = Signal(object)     # minta jendela membuka menu Kunci jawaban (id paket, atau None)
+    cek_tanpa_bidang = Signal()     # minta jendela membuka Scan & nilai pada bidang "Tanpa bidang"
 
     def __init__(self, db):
         super().__init__()
@@ -71,6 +73,22 @@ class KunciTab(QWidget):
         nh.addWidget(self.note_btn, 0, Qt.AlignVCenter)
         self._note_do = None
 
+        # lembar tanpa bidang (kode naskah salah isi / tidak terbaca / gagal dibaca): BUKAN kode naskah baru,
+        # jadi tidak masuk tabel kode; cukup diberi tahu jumlahnya dan diarahkan ke antrean Perlu cek
+        self.note_tb = QFrame()
+        self.note_tb.setProperty("role", "card")
+        th = QHBoxLayout(self.note_tb)
+        th.setContentsMargins(16, 10, 12, 10)
+        th.setSpacing(10)
+        self.note_tb_text = QLabel("")
+        self.note_tb_text.setWordWrap(True)
+        self.note_tb_text.setTextFormat(Qt.RichText)
+        th.addWidget(self.note_tb_text, 1)
+        self.note_tb_btn = theme.button("Cek lembarnya", "clipboard-check",
+                                        tip="Buka Scan & nilai pada bidang 'Tanpa bidang'",
+                                        slot=lambda: self.cek_tanpa_bidang.emit())
+        th.addWidget(self.note_tb_btn, 0, Qt.AlignVCenter)
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Kode naskah", "Mata pelajaran", "Soal", "Lembar di event ini", "Catatan"])
         setup_table(self.table)
@@ -90,6 +108,7 @@ class KunciTab(QWidget):
         cv.setSpacing(14)
         cv.addWidget(self.card)
         cv.addWidget(self.note)
+        cv.addWidget(self.note_tb)
         cv.addWidget(self.table, 1)
 
         self.empty = EmptyState("key", "Event ini belum memakai paket kunci jawaban",
@@ -120,6 +139,7 @@ class KunciTab(QWidget):
         self.event_id = event_id
         self.table.setRowCount(0)
         self.note.setVisible(False)
+        self.note_tb.setVisible(False)
         if event_id is None:
             self.paket_id = None
             self.stack.setCurrentWidget(self.empty)
@@ -135,7 +155,26 @@ class KunciTab(QWidget):
             self._show_lama(lama, lembar)
         else:
             self._show_paket(paket, lembar)
+        self._show_tanpa_bidang()
         self.stack.setCurrentIndex(1)
+
+    def _show_tanpa_bidang(self):
+        """Catatan jumlah lembar tanpa bidang (sama dengan kelompok 'Tanpa bidang' di Scan & nilai)."""
+        g = next((g for g in SV.kelompok_bidang(self.db, self.event_id) if g["key"] == SV.BELUM), None)
+        if g is None:
+            return
+        gagal = sum(1 for v in g["views"] if v.status == "Gagal")
+        kode = sorted({v.row["kode"] for v in g["views"] if v.status != "Gagal" and v.row["kode"]}, key=kode_sort)
+        rinci = []
+        if kode:
+            contoh = ", ".join(kode[:6]) + (" …" if len(kode) > 6 else "")
+            rinci.append(f"kode naskah tidak ada di paket / salah isi (mis. {contoh})")
+        if gagal:
+            rinci.append(f"{gagal} gagal dibaca")
+        self.note_tb_text.setText(
+            f"<b>{len(g['views'])} lembar tanpa bidang</b>: {'; '.join(rinci)}. Lembar ini tidak dinilai dan masuk "
+            "antrean Perlu cek; perbaiki kode naskahnya di Scan &amp; nilai (bidang <i>Tanpa bidang</i>).")
+        self.note_tb.setVisible(True)
 
     def _row(self, kode, nama, jumlah, n_lembar, note="", tone=None):
         r = self.table.rowCount()
@@ -177,9 +216,8 @@ class KunciTab(QWidget):
                 rows.append(("—", m["nama"], len(m["kunci"]), 0, "belum ada kode naskah (isi di menu Kunci jawaban)",
                              "warn"))
         punya = set(kode_all)
-        for k, n in lembar.items():
-            if k not in punya:
-                rows.append((k, "—", "", n, "kode naskah ini tidak ada di paket: lembarnya belum dinilai", "error"))
+        # kode naskah di lembar yang tidak ada di paket (salah isi peserta) TIDAK dibuat baris kode baru:
+        # lembarnya dilaporkan sebagai "tanpa bidang" (lihat _show_tanpa_bidang)
         rows.sort(key=lambda r: (r[0] == "—", kode_sort(r[0]) if r[0] != "—" else (0, 0)))
         for r in rows:
             self._row(*r)
@@ -198,10 +236,6 @@ class KunciTab(QWidget):
         self.btn_ganti.setVisible(False)            # tombol "Pilih paket kunci" ada di catatan di bawahnya
         for s in lama:
             self._row(s.kode, s.bidang, s.jumlah, lembar.get(s.kode, 0))
-        punya = {s.kode for s in lama}
-        for k, n in sorted(lembar.items(), key=lambda kv: kode_sort(kv[0])):
-            if k not in punya:
-                self._row(k, "—", "", n, "kode naskah ini tidak ada di kunci: lembarnya belum dinilai", "error")
         self._set_note("Event ini dibuat sebelum ada paket kunci, jadi masih memakai kunci yang tersimpan di event. "
                        "Pilih paket kunci untuk menggantinya (kunci lama tidak dihapus).",
                        "Pilih paket kunci", self._pilih)

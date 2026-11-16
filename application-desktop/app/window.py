@@ -6,9 +6,10 @@ import shutil
 
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QPainter, QPainterPath, QShortcut
-from PySide6.QtWidgets import (QApplication, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMainWindow, QMenu, QMessageBox, QStackedWidget, QStyle,
-                               QStyledItemDelegate, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                               QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QScrollArea,
+                               QSizePolicy, QStackedWidget, QStyle, QStyledItemDelegate, QTabWidget, QVBoxLayout,
+                               QWidget)
 
 from app import icons, server_client as SC, server_link as SL, theme
 from app.kunci_tab import KunciTab
@@ -17,7 +18,7 @@ from app.nilai_page import NilaiPage
 from app.paket_page import PaketPage
 from app.scan_tab import ScanTab
 from app.server_dialog import ServerDialog
-from app.widgets import EmptyState
+from app.widgets import EmptyState, pasang_pengaman_roda
 
 TABS = (("Kunci jawaban", "Kunci"), ("Scan && nilai", "Scan"), ("Latih model", "Latih"))     # nama, nama pendek
 SIDEBAR_W = 228
@@ -38,6 +39,51 @@ class KompetisiLoader(QThread):
             self.done.emit(SC.kompetisi())
         except SC.ServerError as e:
             self.failed.emit(str(e))
+
+
+class PageStack(QStackedWidget):
+    """Tumpukan halaman yang ukuran minimumnya mengikuti halaman yang tampil saja (bawaan Qt: terbesar dari semua
+    halaman), supaya halaman tersembunyi yang lebar tidak memaksa halaman lain ikut bergulir."""
+
+    def __init__(self):
+        super().__init__()
+        self.currentChanged.connect(lambda _i: self.updateGeometry())
+
+    def sizeHint(self):
+        w = self.currentWidget()
+        return w.sizeHint() if w is not None else super().sizeHint()
+
+    def minimumSizeHint(self):
+        w = self.currentWidget()
+        return w.minimumSizeHint() if w is not None else super().minimumSizeHint()
+
+    def hasHeightForWidth(self):
+        # Bawaan: tinggi-untuk-lebar = terbesar dari SEMUA halaman (label yang turun baris membuat semua halaman
+        # "punya" tinggi-untuk-lebar), sehingga area gulir setinggi halaman tersembunyi yang tertinggi.
+        # Cukup ukuran minimum halaman yang tampil; tata letak di dalam halaman tetap mengurus teks yang turun baris.
+        return False
+
+
+class PageScroll(QScrollArea):
+    """Wadah halaman: bila jendela terlalu kecil untuk ukuran minimum isi halaman, muncul bilah gulir alih-alih
+    widget dipaksa menyempit sampai saling menimpa. Memberi tahu lebar yang tersedia (halaman responsif)."""
+    lebar = Signal(int)
+
+    def __init__(self, widget):
+        super().__init__()
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        # pembungkus polos: QScrollArea memeriksa tinggi-untuk-lebar lewat tata letak isinya, jadi PageStack
+        # (yang menolak tinggi-untuk-lebar) dibungkus satu tata letak biasa
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(widget)
+        self.setWidget(box)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.lebar.emit(self.viewport().width())
 
 
 class EventDialog(QDialog):
@@ -120,6 +166,9 @@ class EventDelegate(QStyledItemDelegate):
 class MainWindow(QMainWindow):
     def __init__(self, db, data_dir):
         super().__init__()
+        # roda mouse tidak mengubah combo/isian angka yang belum diklik (mis. combo jawaban di tabel panel cek,
+        # Kontras baca di kepala halaman saat halaman digulir); gulirannya diteruskan ke tabel/halaman
+        pasang_pengaman_roda(QApplication.instance())
         self.db, self.data_dir = db, data_dir
         self.event_id = None
         self._summary = None
@@ -285,6 +334,7 @@ class MainWindow(QMainWindow):
         self.kunci.changed.connect(self.scan.refresh)
         self.kunci.changed.connect(self._update_header)
         self.kunci.buka_paket.connect(self._open_library)
+        self.kunci.cek_tanpa_bidang.connect(self._cek_tanpa_bidang)
         self.scan.linked.connect(self._event_linked)
         self.scan.summary.connect(self._on_summary)
         self.scan.running.connect(self._running_changed)
@@ -298,12 +348,17 @@ class MainWindow(QMainWindow):
                                 "Buat event untuk mulai memindai LJK. Kunci jawaban disimpan sebagai paket di menu "
                                 "Kunci jawaban (kiri) dan bisa dipakai banyak event.",
                                 theme.button("Buat event", "plus", "primary", slot=self._new_event))
-        self.stack = QStackedWidget()
+        self.stack = PageStack()
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self.tabs)
         self.stack.addWidget(self.library)
         self.stack.addWidget(self.nilai)
-        cv.addWidget(self.stack, 1)
+        self.page_scroll = PageScroll(self.stack)
+        # halaman menu menyusun panelnya atas-bawah bila lebar yang tersedia sempit
+        self.page_scroll.lebar.connect(lambda wd: (self.library.set_lebar(wd), self.nilai.set_lebar(wd),
+                                                   self.scan.set_lebar(wd)))
+        self._tab_policy()
+        cv.addWidget(self.page_scroll, 1)
 
         body = self._body = QWidget()
         bl = self._body_layout = QHBoxLayout(body)
@@ -462,7 +517,7 @@ class MainWindow(QMainWindow):
         if gagal:
             parts.append(f"{gagal} gagal dibaca")
         if s.get("tanpa_nilai"):
-            parts.append(f"{s['tanpa_nilai']} tanpa nilai (kode naskah belum terdaftar)")
+            parts.append(f"{s['tanpa_nilai']} tanpa bidang (kode naskah salah isi / tak terdaftar)")
         return (f"<span style='color:{ink}; font-weight:600'>{siap} dari {total} lembar siap diekspor</span>"
                 + (f"; {', '.join(parts)}" if parts else ""))
 
@@ -544,8 +599,16 @@ class MainWindow(QMainWindow):
         else:
             self._show_event_page()
         self.tabs.setCurrentWidget(self.scan)
+        self.scan.set_bidang(None)                      # lembarnya pasti tampil di antrean
         self.scan.set_filter("Semua")
         self.scan.review.show_lembar(lembar_id)
+
+    def _cek_tanpa_bidang(self):
+        """Dari tab Kunci jawaban: buka Scan & nilai pada bidang 'Tanpa bidang' (kode salah isi / gagal dibaca)."""
+        from ljk import service as SV
+        self.tabs.setCurrentWidget(self.scan)
+        self.scan.set_bidang(SV.BELUM)
+        self.scan.set_filter("Semua")
 
     def _nilai_berubah(self):
         """Hitung ulang di Nilai hasil: nilai di tab event yang terbuka ikut diperbarui."""
@@ -567,6 +630,8 @@ class MainWindow(QMainWindow):
         self._update_header()
         if has and self.tabs.currentWidget() is self.scan:
             self.scan.activate()                        # nilai mungkin berubah karena kunci paket diubah
+        elif has and self.tabs.currentWidget() is self.kunci:
+            self.kunci.load(self.event_id)
 
     def _paket_event_berubah(self):
         """Event memilih paket (sebelum scan): tab Kunci, judul, dan menu ikut diperbarui."""
@@ -686,8 +751,24 @@ class MainWindow(QMainWindow):
 
     # ---- tab
     def _tab_changed(self, idx):
+        self._tab_policy()
         if self.tabs.widget(idx) is self.scan:
             self.scan.activate()
+        elif self.tabs.widget(idx) is self.kunci and self.event_id is not None:
+            # jumlah lembar per kode & kode yang tidak ada di paket ikut berubah saat lembar dicek / ditambah /
+            # dihapus di Scan & nilai: muat ulang setiap kali tab ini dibuka (dulu bisa menampilkan angka lama)
+            self.kunci.load(self.event_id)
+
+    def _tab_policy(self):
+        """Ukuran minimum tab mengikuti tab yang tampil saja. Bawaan Qt memakai yang terbesar dari semua tab, termasuk
+        tab tersembunyi yang masih bersusunan lama (mis. atas-bawah dari jendela sempit tadi), sehingga bilah gulir
+        bisa muncul padahal tab yang tampil muat."""
+        cur = self.tabs.currentWidget()
+        for i in range(self.tabs.count()):
+            pg = self.tabs.widget(i)
+            pol = QSizePolicy.Preferred if pg is cur else QSizePolicy.Ignored
+            pg.setSizePolicy(pol, pol)
+        self.tabs.updateGeometry()
 
     # ---- jendela sempit (mis. setengah layar)
     def resizeEvent(self, e):

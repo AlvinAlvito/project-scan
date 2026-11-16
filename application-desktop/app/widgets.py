@@ -139,9 +139,11 @@ class ToolbarFit(QObject):
     teks jadi pendek) sampai muat; teks kembali saat ruang cukup. `items`: yang paling dulu diringkas
     di depan. Lebar yang tersedia = lebar host dikurangi margin kiri-kanan layout host."""
 
-    def __init__(self, host, row, items):
+    def __init__(self, host, row, items, lebar=None):
+        """lebar: fungsi opsional yang memberi lebar tersedia (dipakai bila host ada di area gulir, karena host
+        tidak pernah lebih sempit dari toolbar-nya sendiri)."""
         super().__init__(host)
-        self.host, self.row, self.items = host, row, list(items)
+        self.host, self.row, self.items, self.lebar = host, row, list(items), lebar
         host.installEventFilter(self)
 
     def eventFilter(self, obj, ev):
@@ -155,7 +157,8 @@ class ToolbarFit(QObject):
 
     def fit(self):
         m = self.host.layout().contentsMargins() if self.host.layout() else None
-        avail = self.host.width() - (m.left() + m.right() if m else 0)
+        width = self.lebar() if self.lebar is not None else self.host.width()
+        avail = width - (m.left() + m.right() if m else 0)
         for it in reversed(self.items):              # kembalikan teks (prioritas tertinggi dulu) selama muat
             if it._compact:
                 it.set_compact(False)
@@ -181,6 +184,53 @@ def set_badge(lb, text, tone):
     if lb.property("tone") != tone:
         lb.setProperty("tone", tone)
         theme.repolish(lb)
+
+
+class WheelGuard(QObject):
+    """Roda mouse di atas kotak pilihan (combo) / isian angka / slider yang BELUM diklik tidak mengubah isinya,
+    tetapi diteruskan ke tabel/area gulir di belakangnya. Tanpa ini, menggulir tabel jawaban yang tiap barisnya
+    berisi combo diam-diam mengganti jawaban dan gulirannya 'nyangkut'. Dipasang sekali di QApplication."""
+
+    TYPES = None
+
+    def eventFilter(self, obj, ev):
+        if WheelGuard.TYPES is None:
+            from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QSlider
+            WheelGuard.TYPES = (QComboBox, QAbstractSpinBox, QSlider)
+        t = ev.type()
+        if t == QEvent.Polish and isinstance(obj, WheelGuard.TYPES):
+            if obj.focusPolicy() == Qt.WheelFocus:      # roda mouse tidak boleh memberi fokus
+                obj.setFocusPolicy(Qt.StrongFocus)
+        elif t == QEvent.Wheel and isinstance(obj, WheelGuard.TYPES) and not obj.hasFocus():
+            self._gulir_induk(obj, ev)
+            return True
+        return False
+
+    @staticmethod
+    def _gulir_induk(obj, ev):
+        """Gulirkan area gulir leluhur terdekat yang masih bisa bergerak ke arah roda (tabel, panel data, lalu
+        halaman), seperti bila roda diputar di tempat kosong."""
+        from PySide6.QtWidgets import QAbstractScrollArea, QApplication
+        dy = ev.angleDelta().y()
+        if not dy:
+            return
+        p = obj.parentWidget()
+        while p is not None:
+            if isinstance(p, QAbstractScrollArea):
+                sb = p.verticalScrollBar()
+                if (dy < 0 and sb.value() < sb.maximum()) or (dy > 0 and sb.value() > sb.minimum()):
+                    step = max(1, sb.singleStep()) * QApplication.wheelScrollLines()
+                    sb.setValue(sb.value() - round(dy / 120 * step))
+                    return
+            p = p.parentWidget()
+
+
+def pasang_pengaman_roda(app):
+    """Pasang WheelGuard di aplikasi (sekali saja)."""
+    if getattr(app, "_wheel_guard", None) is None:
+        app._wheel_guard = WheelGuard(app)
+        app.installEventFilter(app._wheel_guard)
+    return app._wheel_guard
 
 
 def divider():

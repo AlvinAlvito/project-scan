@@ -3,11 +3,11 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFormLayout, QFrame, QGridLayout,
                                QGroupBox, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
-                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget,
+                               QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from app import theme
 from app.colors import paint
@@ -17,10 +17,24 @@ from ljk import db as DBM
 from ljk import nilai as NI
 from ljk import service as SV
 from ljk import tampilan as TP
+from ljk import template as T
 
-CHOICES = [("", "-"), ("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"), ("*", "ganda")]
+# pilihan kolom Jawaban (urutan sama dengan tombol keputusan Soal N); "" = Kosong (soal tidak diisi peserta)
+CHOICES = [("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"), ("", "Kosong"), ("*", "Ganda")]
 PILIHAN = [("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"), ("", "Kosong"), ("*", "Ganda")]  # tombol keputusan
 KIND_TONE = {"ragu": "warn", "ganda": "error"}
+KODE_BIDANG = Qt.UserRole + 11      # nama bidang pada item dropdown Kode naskah
+
+
+class KodeDelegate(QStyledItemDelegate):
+    """Daftar pilihan Kode naskah menampilkan bidangnya ("288 · IPA SD") supaya kode tidak salah pilih.
+    Teks item tetap kode saja, jadi kotak isian dan yang tersimpan tetap kode naskah."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        bidang = index.data(KODE_BIDANG)
+        if bidang:
+            option.text = f"{option.text}  ·  {bidang}"
 STATUS_TONE = {"OK": "ok", "Perlu cek": "warn", "Sudah dicek": "info", "Gagal": "error"}
 HW_ORDER = [("kotak_nama", "Nama"), ("kotak_nomor", "Nomor"), ("kotak_kode", "Kode"),
             ("kotak_tanggal", "Tanggal"), ("bidang", "Bidang"), ("sekolah", "Sekolah"), ("kelas", "Kelas"),
@@ -241,6 +255,8 @@ class ReviewTab(QWidget):
         self.f_nama, self.f_nomor, self.f_tanggal = QLineEdit(), QLineEdit(), QLineEdit()
         self.f_kode = QComboBox()
         self.f_kode.setEditable(True)
+        self.f_kode.setItemDelegate(KodeDelegate(self.f_kode))     # daftar: "288 · IPA SD"; isi kotak tetap kode
+        self.f_kode.setMaxVisibleItems(14)
         self.f_bidang = QLabel("")
         self.read_lbl = {k: QLabel("") for k in ("nama", "nomor", "kode", "tanggal")}
         form.setSpacing(8)
@@ -258,6 +274,7 @@ class ReviewTab(QWidget):
         self._form = form
         for w in (self.f_nama, self.f_nomor, self.f_tanggal):
             w.textEdited.connect(self._mark_dirty)
+        self.f_nama.textEdited.connect(lambda _t: self._tandai_nama(hapus=True))   # sudah dicocokkan panitia
         self.f_kode.currentTextChanged.connect(self._kode_changed)
         rv.addWidget(g_data)
 
@@ -290,14 +307,28 @@ class ReviewTab(QWidget):
         self.ans.setHorizontalHeaderLabels(["No", "Terbaca", "Jawaban", "Kunci", "Hasil"])
         setup_table(self.ans, 36)
         self.ans.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.ans.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # lebar kolom menurut isinya, bukan dibagi rata: di jendela sempit combo Jawaban tetap menampilkan hurufnya
+        # (dulu tinggal panah saja) dan "ganda"/"salah" tidak terpotong; sisa lebar untuk kolom Hasil
+        hh = self.ans.horizontalHeader()
+        for c in (0, 1, 3):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.ans.setObjectName("jawaban")          # padding sel lebih rapat (theme.py)
+        self.ans.setColumnWidth(2, 90)             # muat "Kosong" (pilihan terpanjang)
+        hh.setSectionResizeMode(4, QHeaderView.Stretch)
+        hh.setMinimumSectionSize(36)
+        self.ans.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.ans.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
-        self.ans.setMinimumHeight(260)
+        # tabel tampil penuh (1..N) tanpa gulir sendiri: yang digulir cukup panel data di sekitarnya. Gulir
+        # bertumpuk (tabel di dalam panel di dalam halaman) membuat nomor bawah sulit dicapai di jendela kecil.
+        self.ans.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ans.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.ans.cellClicked.connect(self._answer_clicked)
         al.addWidget(self.ans)
-        rv.addWidget(g_ans, 1)
+        rv.addWidget(g_ans)
+        rv.addStretch(1)
 
-        scroll = QScrollArea()
+        scroll = self.data_scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(right)
@@ -320,10 +351,11 @@ class ReviewTab(QWidget):
         sv.addLayout(btns)
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._save)
         split.addWidget(side)
+        self._panel_gambar, self._panel_data = left, side
         right.setMinimumWidth(300)
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 1)
-        split.setSizes([460, 420])
+        split.setSizes([420, 480])          # panel data sedikit lebih lebar: tabel jawaban punya 5 kolom
         v.addWidget(split, 1)
 
         self.empty = EmptyState("clipboard-check", "Pilih lembar di antrean",
@@ -352,11 +384,16 @@ class ReviewTab(QWidget):
         for v in SV.event_views(self.db, self.event_id):
             self.ids.append(v.row["id"])
             self.status[v.row["id"]] = v.status
-        names = [f"{s.kode}" for s in self.db.naskah(self.event_id)]
+        naskah = self.db.naskah(self.event_id)
         self._loading = True
         cur = self.f_kode.currentText()
         self.f_kode.clear()
-        self.f_kode.addItems(names)
+        for s in naskah:                                # teks item = kode (yang tersimpan); bidang hanya tampilan
+            self.f_kode.addItem(s.kode)
+            self.f_kode.setItemData(self.f_kode.count() - 1, s.bidang, KODE_BIDANG)
+        fm = self.f_kode.view().fontMetrics()
+        lebar = max((fm.horizontalAdvance(f"{s.kode}  ·  {s.bidang}") for s in naskah), default=0)
+        self.f_kode.view().setMinimumWidth(lebar + 48)  # nama bidang panjang tetap terbaca utuh
         self.f_kode.setCurrentText(cur)
         self._loading = False
 
@@ -437,6 +474,7 @@ class ReviewTab(QWidget):
         self._bw_show()
         self._loading = True
         self.f_nama.setText(row["nama"])
+        self._tandai_nama()
         self.f_nomor.setText(row["nomor"])
         self.f_kode.setCurrentText(row["kode"])
         self.f_tanggal.setText(row["tanggal"])
@@ -494,6 +532,24 @@ class ReviewTab(QWidget):
             self.split.setOrientation(Qt.Vertical if tegak else Qt.Horizontal)
             total = self.split.height() if tegak else self.split.width()
             self.split.setSizes([int(total * 0.5), int(total * 0.5)])
+            self._atur_tinggi()
+
+    def set_di_bawah(self, on):
+        """Panel cek ditaruh di bawah antrean (jendela sempit): jangan sampai dijepit setipis sisa ruang."""
+        self._di_bawah = on
+        self._atur_tinggi()
+
+    def _atur_tinggi(self):
+        """Tinggi minimum panel gambar & data. Bila jendela pendek, halaman yang bergulir (bukan panel dijepit)."""
+        tegak = self.split.orientation() == Qt.Vertical
+        if tegak:                                       # gambar di atas data
+            gambar, data = 240, 340
+        elif getattr(self, "_di_bawah", False):         # gambar & data berdampingan, di bawah antrean
+            gambar, data = 0, 440
+        else:
+            gambar, data = 0, 0
+        self._panel_gambar.setMinimumHeight(gambar)
+        self._panel_data.setMinimumHeight(data)
 
     # ---- tampilan hitam-putih
     def _bw_controls(self):
@@ -583,22 +639,28 @@ class ReviewTab(QWidget):
     def _update_kode_label(self):
         s = self._soal()
         self.f_bidang.setText(f"{s.bidang} · {s.jumlah} soal" if s else
-                              f"<span style='color:{theme.tone_hex('error')[1]}'>kode naskah belum terdaftar</span>")
+                              f"<span style='color:{theme.tone_hex('error')[1]}'>kode naskah tidak ada di paket (salah isi?): pilih kode yang benar</span>")
 
     def _fill_issues(self):
         self.issues.clear()
         self._first_soal = None
         view = SV.sheet_view(self.cur, {s.kode: s for s in self.db.naskah(self.event_id)},
                              SV.duplicate_nomor(self.db.lembar(self.event_id)))
-        items = list(self.baca.get("issues", []))
+        # hanya sampai soal terakhir kunci (aturan yang sama dengan status lembar)
+        items = SV.saring_catatan(self.baca.get("issues", []), view.soal)
         texts = {i["text"] for i in items}
         items += [i for i in view.issues if i["text"] not in texts]
         if self.cur["dicek"]:
             items.insert(0, {"text": "Lembar ini sudah dicek. Hasil baca awal di bawah hanya sebagai catatan.",
                              "key": "info", "x": None, "y": None})
+        lebih = SV.info_lebih(view.skor, view.soal)
+        if lebih:
+            items.append({"text": lebih, "key": "info", "x": None, "y": None})
         for it in items:
             li = QListWidgetItem(it["text"])
             li.setData(Qt.UserRole, it)
+            if it.get("key") == "info":                  # keterangan saja, bukan yang perlu dicek
+                li.setForeground(QColor(theme.c("muted")))
             self.issues.addItem(li)
             if self._first_soal is None and str(it.get("key", "")).startswith("soal:"):
                 self._first_soal = int(it["key"].split(":")[1]) - 1
@@ -636,8 +698,12 @@ class ReviewTab(QWidget):
             combo = QComboBox()
             for val, text in CHOICES:
                 combo.addItem(text, val)
+            # daftar pilihan selalu memuat ketujuh pilihan tanpa gulir (tinggi baris 26 px dari theme.py)
+            combo.setMaxVisibleItems(len(CHOICES))
+            combo.view().setMinimumHeight(len(CHOICES) * 26 + 2 * combo.view().frameWidth() + 2)
+            combo.view().setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             vals = [c[0] for c in CHOICES]
-            combo.setCurrentIndex(vals.index(self.answers[q]) if self.answers[q] in vals else 0)
+            combo.setCurrentIndex(vals.index(self.answers[q]) if self.answers[q] in vals else vals.index(""))
             combo.currentIndexChanged.connect(lambda _i, qq=q, cb=combo: self._answer_changed(qq, cb))
             self.ans.setCellWidget(q, 2, combo)
             ki = QTableWidgetItem(s.kunci[q] if s and q < s.jumlah else "")
@@ -648,6 +714,49 @@ class ReviewTab(QWidget):
             self.ans.setItem(q, 4, res)
         self._update_results()
         self._filter_answers()
+        self._redupkan()
+
+    def _tandai_nama(self, hapus=False):
+        """Catatan kolom nama tidak dimunculkan (keputusan panitia), jadi nama yang hurufnya ragu menurut mesin
+        ditandai di kotak Nama saja: latar kuning + keterangan di tooltip. Hilang setelah nama diketik ulang
+        dan untuk lembar yang sudah dicek."""
+        ragu = [] if (hapus or self.cur is None or self.cur["dicek"]) else SV.nama_ragu(self.baca)
+        if ragu:
+            bg, fg = theme.tone_hex("warn")
+            self.f_nama.setStyleSheet(f"QLineEdit {{ background: {bg}; border: 1px solid {fg}; }}")
+            cols = ", ".join(str(c) for c, _ in ragu[:10]) + (" …" if len(ragu) > 10 else "")
+            self.f_nama.setToolTip(f"Huruf di kolom {cols} ragu menurut mesin baca. Cocokkan dengan tulisan tangan "
+                                   "di bagian Tulisan tangan, lalu perbaiki bila perlu.")
+        else:
+            self.f_nama.setStyleSheet("")
+            self.f_nama.setToolTip("")
+
+    def _redupkan(self):
+        """Redupkan nomor soal setelah soal terakhir kunci di gambar cek: tidak dinilai dan tidak perlu dicek
+        (tanda oranye/hijau di sana hanya hasil baca bagian kertas yang tidak dipakai)."""
+        s = self._soal()
+        img = self.view._original
+        if self.cur is None or s is None or img.isNull() or s.jumlah >= 180:
+            self.view.set_redup([])
+            return
+        sc = SV.cek_scale(img.width())
+        per_blok, jarak = {}, None
+        pilihan = {}
+        for g, i, v, x, y in T.BUBBLES:
+            if g != "jawaban":
+                continue
+            pilihan.setdefault(i, {})[v] = (x, y)
+            if i >= s.jumlah:
+                per_blok.setdefault(i // 30, []).append((x, y))
+        a, b = pilihan[0].get("A"), pilihan[0].get("B")
+        jarak = abs(b[0] - a[0]) * sc if a and b else 30 * sc       # jarak antarbulatan di gambar cek
+        rects = []
+        for blok in sorted(per_blok):
+            xy = SV.cek_xy(per_blok[blok], sc)
+            x0, y0 = xy.min(axis=0)
+            x1, y1 = xy.max(axis=0)
+            rects.append((x0 - 2.7 * jarak, y0 - 0.65 * jarak, x1 + 0.75 * jarak, y1 + 0.65 * jarak))
+        self.view.set_redup(rects, f"Soal {s.jumlah + 1}-180 tidak dinilai (kunci {s.jumlah} soal)")
 
     def _update_results(self):
         s = self._soal()
@@ -656,7 +765,7 @@ class ReviewTab(QWidget):
             if s is None or q >= s.jumlah:
                 txt, col = "", None
             elif a == "*":
-                txt, col = "salah (ganda)", "error"
+                txt, col = "salah", "error"         # "ganda" sudah tampil di kolom Jawaban
             elif a == "":
                 txt, col = "kosong", None
             elif a == s.kunci[q]:
@@ -675,7 +784,7 @@ class ReviewTab(QWidget):
                 f"{sk.salah} salah &nbsp;·&nbsp; {sk.kosong} kosong</span>")
         else:
             self.score_lbl.setText(f"<span style='color:{theme.c('muted')}'>Nilai belum bisa dihitung: "
-                                   "kode naskah belum terdaftar</span>")
+                                   "kode naskah tidak ada di paket (salah isi?)</span>")
 
     def _filter_answers(self):
         kinds = self.baca.get("jawaban_kind", [])
@@ -683,6 +792,28 @@ class ReviewTab(QWidget):
         for q in range(self.ans.rowCount()):
             bad = q < len(kinds) and kinds[q] in ("ragu", "ganda")
             self.ans.setRowHidden(q, only and not bad)
+        self._fit_answers()
+
+    def _fit_answers(self):
+        """Tinggi tabel jawaban = semua baris yang tampil (tabel tidak bergulir sendiri)."""
+        t = self.ans
+        rows = sum(t.rowHeight(q) for q in range(t.rowCount()) if not t.isRowHidden(q))
+        h = t.horizontalHeader().height() + rows + 2 * t.frameWidth() + 2
+        t.setFixedHeight(max(h, t.horizontalHeader().height() + 40))
+
+    def _lihat_soal(self, q):
+        """Gulir panel data (dan halaman, bila panel cek sendiri terpotong di jendela kecil) sampai baris soal q di
+        tabel jawaban terlihat."""
+        it = self.ans.item(q, 0)
+        if it is None:
+            return
+        r = self.ans.visualItemRect(it)
+        p = self.ans.parentWidget()
+        while p is not None:
+            if isinstance(p, QScrollArea) and p.widget() is not None:
+                c = self.ans.viewport().mapTo(p.widget(), r.center())
+                p.ensureVisible(c.x(), c.y(), 20, r.height() + 12)
+            p = p.parentWidget()
 
     # ---------------------------------------------------------------- keputusan satu soal
     def _set_decision(self, q):
@@ -759,7 +890,7 @@ class ReviewTab(QWidget):
             if q < self.ans.rowCount():
                 self._set_decision(q)
                 self.ans.selectRow(q)
-                self.ans.scrollToItem(self.ans.item(q, 0))
+                self._lihat_soal(q)
         elif key.startswith(("nama", "nomor", "kode", "tanggal")):
             {"nama": self.f_nama, "nomor": self.f_nomor, "kode": self.f_kode,
              "tanggal": self.f_tanggal}[key.split(":")[0]].setFocus()
@@ -798,8 +929,8 @@ class ReviewTab(QWidget):
         kode = self.f_kode.currentText().strip()
         tanggal = self.f_tanggal.text().strip()
         warn = []
-        if any(ch in nama + nomor + kode for ch in "?_"):
-            warn.append("Masih ada tanda ? atau _ di nama, nomor peserta, atau kode naskah.")
+        if any(ch in nomor + kode for ch in "?_"):
+            warn.append("Masih ada tanda ? atau _ di nomor peserta atau kode naskah.")
         if not nomor.isdigit():
             warn.append("Nomor peserta belum berupa angka lengkap.")
         if self._soal() is None:

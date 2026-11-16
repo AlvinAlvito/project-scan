@@ -8,13 +8,13 @@ from pathlib import Path
 from PySide6.QtCore import QItemSelectionModel, QRectF, QSize, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QMenu, QMessageBox, QProgressBar, QSplitter, QStackedWidget, QStyle,
-                               QStyledItemDelegate, QVBoxLayout, QWidget)
+                               QListWidgetItem, QMenu, QMessageBox, QProgressBar, QSizePolicy, QSplitter, QStackedWidget,
+                               QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from app import server_client as SC
 from app import server_link as SL
 from app import theme
-from app.paket_page import pilih_paket
+from app.paket_page import pilih_paket, ringkas_kode
 from app.review_tab import ReviewTab
 from app.server_dialog import ServerDialog
 from app.widgets import CountCard, EmptyState, toolbar
@@ -76,13 +76,43 @@ class Worker(QThread):
 
 class QueueDelegate(QStyledItemDelegate):
     """Baris antrean dua tingkat: nama & nilai, lalu catatan pertama & nomor lembar (atau status di 'Semua').
-    Terpilih: latar abu-abu dengan garis 2 px warna merek di tepi kiri."""
+    Terpilih: latar abu-abu dengan garis 2 px warna merek di tepi kiri. Baris judul bidang (saat 'Semua bidang'):
+    nama bidang tebal + jumlah lembar, tidak bisa dipilih."""
+    HEADER_H = 40
 
     def sizeHint(self, option, index):
-        return QSize(option.rect.width(), 64)
+        d = index.data(DATA) or {}
+        return QSize(option.rect.width(), self.HEADER_H if d.get("header") else 64)
+
+    def _paint_header(self, p, option, d):
+        r = option.rect
+        p.fillRect(r, QColor(theme.c("surface2")))
+        p.fillRect(r.left(), r.bottom(), r.width(), 1, QColor(theme.c("border")))
+        f = QFont(option.font)
+        f.setWeight(QFont.DemiBold)
+        p.setFont(f)
+        fm = p.fontMetrics()
+        info = d.get("info", "")
+        small = QFont(option.font)
+        small.setPointSizeF(f.pointSizeF() * 0.9)
+        p.setFont(small)
+        w_info = p.fontMetrics().horizontalAdvance(info)
+        right = r.right() - 12
+        p.setPen(QColor(theme.c("muted")))
+        p.drawText(QRectF(right - w_info, r.top(), w_info, r.height()), Qt.AlignRight | Qt.AlignVCenter, info)
+        p.setFont(f)
+        p.setPen(QColor(theme.c("text")))
+        avail = int(right - w_info - 12 - (r.left() + 14))
+        p.drawText(QRectF(r.left() + 14, r.top(), avail, r.height()), Qt.AlignLeft | Qt.AlignVCenter,
+                   fm.elidedText(d.get("judul", ""), Qt.ElideRight, avail))
 
     def paint(self, p, option, index):
         d = index.data(DATA) or {}
+        if d.get("header"):
+            p.save()
+            self._paint_header(p, option, d)
+            p.restore()
+            return
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
         r = option.rect
@@ -163,6 +193,7 @@ class ScanTab(QWidget):
         self._filter = "Perlu cek"
         self._query = ""
         self._order = []               # [(id, status)] antrean yang sedang tampil, berurutan
+        self._baris = []               # nomor baris QListWidget tiap lembar di _order (ada baris judul bidang)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 16, 0, 0)
@@ -172,7 +203,7 @@ class ScanTab(QWidget):
         self.btn_add = theme.button("Tambah foto", "image-plus", tip="Tambah foto LJK ke event ini")
         add_menu = QMenu(self.btn_add)
         self.act_files = add_menu.addAction("Pilih foto…", self._add_files)
-        self.act_folder = add_menu.addAction("Semua foto di satu folder…", self._add_folder)
+        self.act_folder = add_menu.addAction("Semua foto di folder (termasuk sub-folder)…", self._add_folder)
         self.btn_add.setMenu(add_menu)
         self.btn_export = theme.button("Ekspor nilai", "download", tip="Simpan daftar nilai ke Excel",
                                        slot=self._export)
@@ -219,6 +250,21 @@ class ScanTab(QWidget):
         qv = QVBoxLayout(queue)
         qv.setContentsMargins(0, 0, 0, 0)
         qv.setSpacing(10)
+        # bidang (mata pelajaran) dari paket kunci: menyaring antrean, kartu hitung, dan "simpan lalu lanjut"
+        brow = toolbar(8)
+        lb_bidang = QLabel("Bidang")
+        lb_bidang.setProperty("role", "muted")
+        self.bidang = QComboBox()
+        self.bidang.setToolTip("Tampilkan lembar satu bidang saja (bidang dari paket kunci jawaban event ini)")
+        self.bidang.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.bidang.setMinimumContentsLength(14)
+        self.bidang.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.bidang.setMaxVisibleItems(16)
+        self.bidang.currentIndexChanged.connect(self._bidang_changed)
+        brow.addWidget(lb_bidang)
+        brow.addWidget(self.bidang, 1)
+        qv.addLayout(brow)
+        self._bidang_key = None                     # None = semua bidang; selain itu str(kunci kelompok)
         head = toolbar(8)
         self.q_title = QLabel("")
         self.q_title.setProperty("role", "h2")
@@ -246,7 +292,7 @@ class ScanTab(QWidget):
         self.queue.setObjectName("queue")
         self.queue.setItemDelegate(QueueDelegate(self.queue))
         self.queue.setMouseTracking(True)
-        self.queue.setUniformItemSizes(True)
+        self.queue.setUniformItemSizes(False)       # baris judul bidang lebih pendek dari baris lembar
         self.queue.setSelectionMode(QListWidget.ExtendedSelection)
         self.queue.setVerticalScrollMode(QListWidget.ScrollPerPixel)
         self.queue.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -300,6 +346,7 @@ class ScanTab(QWidget):
         self.kontras.blockSignals(False)
         self.kontras.setEnabled(event_id is not None and not self.busy())
         self._filter = None                         # dipilih ulang menurut isi event (lihat refresh)
+        self._bidang_key = None                     # event lain: mulai dari semua bidang
         self.refresh()
         self.review.load(event_id)
         if self.review.cur is not None and self._pos(self.review.cur["id"]) == 0 and self.queue.count():
@@ -352,75 +399,152 @@ class ScanTab(QWidget):
         if self.review.cur is not None and self._pos(self.review.cur["id"]) == 0 and self.queue.count():
             self._select(0)
 
-    def _select(self, row):
-        """Pilih satu baris antrean (pilihan lain dilepas) dan buka lembarnya."""
-        self.queue.setCurrentRow(row, QItemSelectionModel.ClearAndSelect)
+    def _bidang_changed(self, _idx):
+        if self._isi_bidang_jalan:
+            return
+        self._bidang_key = self.bidang.currentData()
+        self.refresh()
+        if self.review.cur is not None and self._pos(self.review.cur["id"]) == 0 and self._order:
+            self._select(0)                         # lembar yang terbuka bukan bidang ini: buka lembar pertamanya
+
+    _isi_bidang_jalan = False
+
+    def set_bidang(self, key):
+        """Pilih bidang (None = semua bidang; selain itu kunci kelompok dari service.kelompok_bidang) dari luar,
+        mis. saat lembar dibuka dari menu Nilai hasil."""
+        self._bidang_key = None if key is None else str(key)
+        self.refresh()
+
+    def _isi_bidang(self, groups, total):
+        """Isi dropdown Bidang: Semua bidang + semua bidang paket (jumlah lembar) + lembar tanpa bidang (bila ada)."""
+        self._isi_bidang_jalan = True
+        self.bidang.clear()
+        self.bidang.addItem(f"Semua bidang ({total})", None)
+        for g in groups:
+            n = len(g["views"])
+            if g["key"] == SV.BELUM:
+                teks = f"Tanpa bidang: gagal dibaca / kode tak terdaftar ({n})"
+            else:
+                kode = ringkas_kode(g["kode"])
+                teks = f"{g['nama']}" + (f" · {kode}" if kode else "") + f" ({n})"
+            self.bidang.addItem(teks, str(g["key"]))      # teks: QComboBox.findData tidak bisa mencari tuple
+        i = self.bidang.findData(self._bidang_key) if self._bidang_key is not None else 0
+        if i < 0:                                   # bidang hilang (mis. paket diganti): kembali ke semua bidang
+            self._bidang_key, i = None, 0
+        self.bidang.setCurrentIndex(i)
+        self.bidang.setEnabled(bool(groups))
+        self._isi_bidang_jalan = False
+
+    def _select(self, i):
+        """Pilih lembar ke-i antrean (urutan lembar, tanpa baris judul bidang) dan buka lembarnya."""
+        if 0 <= i < len(self._baris):
+            self.queue.setCurrentRow(self._baris[i], QItemSelectionModel.ClearAndSelect)
 
     def set_query(self, text):
         self._query = text.strip().lower()
         self.refresh()
 
-    def refresh(self):
-        if self.event_id is None:
-            self.queue.clear()
-            self._order = []
-            return
-        views = SV.event_views(self.db, self.event_id)
+    @staticmethod
+    def _hitung(views):
         counts = {f: 0 for f in FILTERS}
         counts["Semua"] = len(views)
         for v in views:
             counts[v.status] = counts.get(v.status, 0) + 1
-        if self._filter is None:
-            self._filter = next((f for f in ("Perlu cek", "Gagal") if counts[f]), "Semua")
-        for f, card in self.cards.items():
-            card.set(counts[f])
-        self.cards[self._filter].setChecked(True)
-        self.summary.emit(dict(counts, tanpa_nilai=sum(1 for v in views if v.status != "Gagal" and v.skor is None)))
-        self.stack.setCurrentWidget(self.desk if views else self.empty)
+        return counts
 
-        rows = [v for v in views if self._filter == "Semua" or v.status == self._filter]
-        if self._query:
-            rows = [v for v in rows if self._query in " ".join(
-                str(x) for x in (v.row["nama"], v.row["nomor"], v.row["kode"], Path(v.row["file"]).name,
-                                 SV.server_info(v.row).get("kota", ""))).lower()]
+    def _urut(self, rows):
         key = self.sort.currentData()
         if key == "nilai":
             rows.sort(key=lambda v: (v.skor is None, -(v.skor.nilai if v.skor else 0), v.row["urutan"]))
         elif key == "kode":
             rows.sort(key=lambda v: (v.row["kode"] or "~", v.row["urutan"]))
+        return rows
+
+    def refresh(self):
+        if self.event_id is None:
+            self.queue.clear()
+            self._order, self._baris = [], []
+            return
+        views = SV.event_views(self.db, self.event_id)
+        groups = SV.kelompok_bidang(self.db, self.event_id, views)
+        self._isi_bidang(groups, len(views))
+        sel = next((g for g in groups if str(g["key"]) == self._bidang_key), None) if self._bidang_key is not None else None
+        pilih = views if sel is None else sel["views"]          # lembar bidang terpilih
+        # judul event & sidebar: seluruh event; kartu hitung & antrean: bidang terpilih
+        self.summary.emit(dict(self._hitung(views),
+                               tanpa_nilai=sum(1 for v in views if v.status != "Gagal" and v.skor is None)))
+        counts = self._hitung(pilih)
+        if self._filter is None:
+            self._filter = next((f for f in ("Perlu cek", "Gagal") if counts[f]), "Semua")
+        for f, card in self.cards.items():
+            card.set(counts[f])
+        self.cards[self._filter].setChecked(True)
+        self.stack.setCurrentWidget(self.desk if views else self.empty)
+
+        rows = [v for v in pilih if self._filter == "Semua" or v.status == self._filter]
+        if self._query:
+            rows = [v for v in rows if self._query in " ".join(
+                str(x) for x in (v.row["nama"], v.row["nomor"], v.row["kode"], Path(v.row["file"]).name,
+                                 SV.server_info(v.row).get("kota", ""))).lower()]
         self.q_title.setText(("Semua lembar" if self._filter == "Semua" else self._filter) +
                              (f" · {len(rows)} cocok" if self._query else ""))
+        # Semua bidang: dikelompokkan per bidang (judul + lembarnya); satu bidang: daftar biasa
+        if sel is None and groups:
+            masuk = {v.row["id"] for v in rows}
+            urutan = []
+            for g in groups:
+                gv = self._urut([v for v in g["views"] if v.row["id"] in masuk])
+                if gv:
+                    urutan.append((g, gv))
+        else:
+            urutan = [(None, self._urut(rows))]
 
         cur = self.review.cur["id"] if self.review.cur is not None else None
         self.queue.blockSignals(True)
         self.queue.clear()
-        self._order = []
-        for v in rows:
-            r, sk, srv = v.row, v.skor, SV.server_info(v.row)
-            why = v.issues[0]["text"] if v.issues else (r["error"] or (f"{r['kode']} {v.soal.bidang}" if v.soal else r["kode"]))
-            it = QListWidgetItem()
-            it.setData(Qt.UserRole, r["id"])
-            it.setData(DATA, {
-                "nama": r["nama"] or ("Gagal dibaca" if v.status == "Gagal" else "Nama tidak terbaca"),
-                "nama_ok": bool(r["nama"]),
-                "nilai": str(sk.nilai) if sk is not None else "—",
-                "maks": f"/{4 * v.soal.jumlah}" if sk is not None and v.soal else "",
-                "why": why,
-                "meta": f"#{r['urutan']}" + (" · HP" if srv else ""),
-                "pill": v.status if self._filter == "Semua" and v.status != "OK" else None,
-            })
-            it.setToolTip(f"#{r['urutan']} · {Path(r['file']).name}" +
-                          "".join(f"\n{i['text']}" for i in v.issues))
-            self.queue.addItem(it)
-            self._order.append((r["id"], v.status))
-            if r["id"] == cur:
-                self.queue.setCurrentItem(it, QItemSelectionModel.ClearAndSelect)
+        self._order, self._baris = [], []
+        for g, gv in urutan:
+            if g is not None:
+                judul = "Tanpa bidang (gagal dibaca / kode tak terdaftar)" if g["key"] == SV.BELUM else (
+                    g["nama"] + (f" · {ringkas_kode(g['kode'])}" if g["kode"] else ""))
+                hd = QListWidgetItem()
+                hd.setFlags(Qt.NoItemFlags)                     # judul: tidak bisa dipilih / dibuka
+                hd.setData(DATA, {"header": True, "judul": judul, "info": f"{len(gv)} lembar"})
+                self.queue.addItem(hd)
+            for v in gv:
+                self._tambah_baris(v, cur)
         self.queue.blockSignals(False)
+        kosong = KOSONG[self._filter]
+        if sel is not None and not sel["views"]:
+            kosong = "Belum ada lembar untuk bidang ini."
         self.q_empty.setText(f"Tidak ada lembar yang cocok dengan “{self._query}”." if self._query and not rows
-                             else KOSONG[self._filter])
+                             else kosong)
         self.q_stack.setCurrentWidget(self.queue if rows else self.q_empty)
         self.review.refresh_list()
         self._update_position()
+
+    def _tambah_baris(self, v, cur):
+        """Satu baris lembar di antrean (dicatat di _order & _baris untuk navigasi)."""
+        r, sk, srv = v.row, v.skor, SV.server_info(v.row)
+        why = v.issues[0]["text"] if v.issues else (r["error"] or (f"{r['kode']} {v.soal.bidang}" if v.soal else r["kode"]))
+        it = QListWidgetItem()
+        it.setData(Qt.UserRole, r["id"])
+        it.setData(DATA, {
+            "nama": r["nama"] or ("Gagal dibaca" if v.status == "Gagal" else "Nama tidak terbaca"),
+            "nama_ok": bool(r["nama"]),
+            "nilai": str(sk.nilai) if sk is not None else "—",
+            "maks": f"/{4 * v.soal.jumlah}" if sk is not None and v.soal else "",
+            "why": why,
+            "meta": f"#{r['urutan']}" + (" · HP" if srv else ""),
+            "pill": v.status if self._filter == "Semua" and v.status != "OK" else None,
+        })
+        it.setToolTip(f"#{r['urutan']} · {Path(r['file']).name}" +
+                      "".join(f"\n{i['text']}" for i in v.issues))
+        self.queue.addItem(it)
+        self._order.append((r["id"], v.status))
+        self._baris.append(self.queue.count() - 1)
+        if r["id"] == cur:
+            self.queue.setCurrentItem(it, QItemSelectionModel.ClearAndSelect)
 
     def _pos(self, lembar_id):
         """Posisi lembar di antrean (mulai 1), 0 bila tidak ada."""
@@ -437,6 +561,8 @@ class ScanTab(QWidget):
         if item is None:
             return
         lid = item.data(Qt.UserRole)
+        if lid is None:                     # baris judul bidang
+            return
         if self.review.cur is None or self.review.cur["id"] != lid:
             self.review.show_lembar(lid)
 
@@ -447,9 +573,10 @@ class ScanTab(QWidget):
             # klik di antrean sendiri: pilihan (Ctrl/Shift+klik) dan posisi gulir diurus Qt; menggulir di tengah
             # klik membuat pilihan jatuh ke baris lain. Hanya perpindahan dari luar antrean (tombol, simpan
             # lalu lanjut) yang memilih dan menggulir ke lembarnya.
-            if self.queue.currentRow() != i - 1:
-                self.queue.setCurrentRow(i - 1, QItemSelectionModel.ClearAndSelect)
-                self.queue.scrollToItem(self.queue.item(i - 1))
+            row = self._baris[i - 1]
+            if self.queue.currentRow() != row:
+                self.queue.setCurrentRow(row, QItemSelectionModel.ClearAndSelect)
+                self.queue.scrollToItem(self.queue.item(row))
         else:
             self.queue.clearSelection()
         self.queue.blockSignals(False)
@@ -469,14 +596,28 @@ class ScanTab(QWidget):
         return next((lid for lid, st in order if lid != cur_id and st in ("Perlu cek", "Gagal")), None)
 
     def _selected_ids(self):
-        return [it.data(Qt.UserRole) for it in self.queue.selectedItems()]
+        return [it.data(Qt.UserRole) for it in self.queue.selectedItems() if it.data(Qt.UserRole) is not None]
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        tegak = self.width() < MEJA_TEGAK
+        self._atur_meja()
+
+    def set_lebar(self, lebar):
+        """Lebar yang tersedia dari jendela (halaman ada di area gulir, jadi tab ini tidak pernah lebih sempit dari
+        ukuran minimumnya sendiri; keputusan susunan memakai lebar yang benar-benar terlihat)."""
+        self._lebar = lebar
+        self._atur_meja()
+
+    def _atur_meja(self):
+        lebar = min(self.width(), getattr(self, "_lebar", self.width()))
+        tegak = lebar < MEJA_TEGAK
         if tegak != (self.desk.orientation() == Qt.Vertical):
             self.desk.setOrientation(Qt.Vertical if tegak else Qt.Horizontal)
             self.desk.setSizes([220, 600] if tegak else [320, 900])
+            # antrean di atas panel cek: panel cek tetap cukup tinggi untuk gambar + data (halaman yang bergulir
+            # bila jendela pendek), jangan dijepit sampai datanya hanya terlihat sejengkal
+            self.review.set_di_bawah(tegak)
+            self.queue.setMinimumHeight(150 if tegak else 0)
 
     # ---- tambah & proses
     def _pastikan_paket(self):
@@ -496,12 +637,39 @@ class ScanTab(QWidget):
         self.refresh()
         return True
 
+    @staticmethod
+    def _foto_dalam(folder):
+        """Semua foto LJK di folder ini dan semua sub-foldernya (mis. satu sub-folder per bidang)."""
+        return [p for p in Path(folder).rglob("*") if p.is_file() and p.suffix.lower() in EXTS]
+
     def _add_folder(self):
         if not self._pastikan_paket():
             return
-        folder = QFileDialog.getExistingDirectory(self, "Folder foto LJK")
-        if folder:
-            self._start([p for p in Path(folder).iterdir() if p.suffix.lower() in EXTS])
+        folder = QFileDialog.getExistingDirectory(self, "Folder foto LJK (sub-folder ikut dibaca)")
+        if not folder:
+            return
+        folder = Path(folder)
+        paths = self._foto_dalam(folder)
+        if not paths:
+            QMessageBox.information(self, "Tambah foto", "Tidak ada foto LJK (jpg, png, bmp, tif) di folder itu "
+                                                         "maupun di sub-foldernya.")
+            return
+        per = {}
+        for p in paths:
+            per[p.parent] = per.get(p.parent, 0) + 1
+        if any(d != folder for d in per):            # ada foto di sub-folder: tunjukkan ringkasannya dulu
+            def nama(d):
+                return "(folder ini)" if d == folder else str(d.relative_to(folder))
+            baris = [f"•  {nama(d)}: {n} foto" for d, n in sorted(per.items(), key=lambda kv: str(kv[0]).casefold())]
+            if len(baris) > 25:
+                baris = baris[:25] + [f"•  … dan {len(per) - 25} folder lain"]
+            if QMessageBox.question(
+                    self, "Tambah foto",
+                    f"Ditemukan {len(paths)} foto di {len(per)} folder:\n\n" + "\n".join(baris) +
+                    "\n\nBidang tiap lembar tetap ditentukan dari kode naskah di LJK. Foto yang sudah ada di event "
+                    "ini dilewati.\n\nProses semuanya?") != QMessageBox.Yes:
+                return
+        self._start(paths)
 
     def _add_files(self):
         if not self._pastikan_paket():
@@ -515,7 +683,9 @@ class ScanTab(QWidget):
             return
         if urutan is None:
             have = self.db.files(self.event_id)
-            new = sorted((p for p in paths if str(p) not in have), key=lambda p: p.name)
+            # urut per folder lalu nama file: foto dari sub-folder yang sama berurutan nomornya
+            new = sorted((p for p in paths if str(p) not in have),
+                         key=lambda p: (str(p.parent).casefold(), p.name.casefold()))
             skipped = len(paths) - len(new)
             if not new:
                 QMessageBox.information(self, "Tambah foto", "Semua foto itu sudah ada di event ini.")

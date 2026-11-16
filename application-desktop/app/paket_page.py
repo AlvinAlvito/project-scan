@@ -25,6 +25,7 @@ from ljk.db import kode_sort, kunci_lengkap
 
 LETTERS = "ABCDE"
 MAKS_KODE = 10          # panjang kode naskah (sama dengan batas server)
+TEGAK = 900             # lebar halaman di bawah ini: panel urutan kunci di bawah daftar, bukan di samping
 
 
 def ringkas_kode(kode):
@@ -70,15 +71,15 @@ def kode_lembar(db, event_id):
 # ------------------------------------------------------------------ urutan kunci (bulatan 1..N)
 
 class KunciView(QWidget):
-    """Urutan kunci jawaban seperti LJK: blok 30 nomor, pilihan A-E; kunci terisi bulat penuh.
-    Hanya untuk dilihat; klik dua kali = minta edit (diteruskan lewat sinyal)."""
+    """Urutan kunci jawaban: SATU kolom berurutan ke bawah (1, 2, 3, ... N) di semua ukuran jendela, pilihan A-E;
+    kunci terisi bulat penuh. Hanya untuk dilihat; klik dua kali = minta edit (diteruskan lewat sinyal)."""
     edit_requested = Signal()
-    ROW_H, NO_W, CELL, R = 30, 40, 30, 11
-    BLOCK, GAP_X, GAP_Y = 30, 28, 18
+    ROW_H, NO_W, CELL, R = 30, 44, 30, 11
 
     def __init__(self):
         super().__init__()
         self.kunci = ""
+        self.setMinimumWidth(self._col_w() + 8)        # satu baris nomor + A-E selalu utuh
         theme.bus.changed.connect(self.update)
 
     def set_kunci(self, kunci):
@@ -89,27 +90,13 @@ class KunciView(QWidget):
     def _col_w(self):
         return self.NO_W + 5 * self.CELL
 
-    def _cols(self):
-        blocks = max(1, -(-len(self.kunci) // self.BLOCK))
-        fit = max(1, (self.width() - 8 + self.GAP_X) // (self._col_w() + self.GAP_X))
-        return min(blocks, fit)
-
     def _pos(self, q):
-        b, r = divmod(q, self.BLOCK)
-        cols = self._cols()
-        bx, by = b % cols, b // cols
-        x = 4 + bx * (self._col_w() + self.GAP_X)
-        y = 4 + by * (self.BLOCK * self.ROW_H + self.GAP_Y) + r * self.ROW_H
-        return x, y
+        """Posisi nomor q (mulai 0): satu kolom, tidak pernah bersambung ke samping."""
+        return 4, 4 + q * self.ROW_H
 
     def _relayout(self):
         n = len(self.kunci)
-        h = (self._pos(n - 1)[1] + self.ROW_H + 8) if n else 0
-        self.setMinimumHeight(h)
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._relayout()
+        self.setMinimumHeight(4 + n * self.ROW_H + 8 if n else 0)
 
     def sizeHint(self):
         return QSize(self._col_w() + 8, 400)
@@ -331,8 +318,11 @@ class PaketPage(QWidget):
                                                      self.b_mapel_edit, self.b_mapel_del))
         lv.addLayout(row_mapel)
         # jendela sempit: tombol jadi ikon saja (nama di tooltip), yang paling jarang dipakai dulu
-        ToolbarFit(left, row_paket, (self.b_paket_del, self.b_paket_ren, self.b_paket_add))
-        ToolbarFit(left, row_mapel, (self.b_mapel_del, self.b_mapel_edit, self.b_mapel_add, self.b_xls, self.b_pdf))
+        self._avail = 1200
+        lebar_kiri = lambda: self._avail if self._tegak else left.width()    # noqa: E731
+        self._fits = [ToolbarFit(left, row_paket, (self.b_paket_del, self.b_paket_ren, self.b_paket_add), lebar_kiri),
+                      ToolbarFit(left, row_mapel, (self.b_mapel_del, self.b_mapel_edit, self.b_mapel_add,
+                                                   self.b_xls, self.b_pdf), lebar_kiri)]
         self.t_mapel = QTableWidget(0, 4)
         self.t_mapel.setHorizontalHeaderLabels(["Mata pelajaran", "Soal", "Kode naskah", "Catatan"])
         setup_table(self.t_mapel, 36)
@@ -417,15 +407,18 @@ class PaketPage(QWidget):
         self.k_stack.addWidget(self.k_scroll)
         rv.addWidget(self.k_stack, 1)
 
-        split = QSplitter(Qt.Horizontal)
+        split = self.split = QSplitter(Qt.Horizontal)
         split.setChildrenCollapsible(False)
         split.addWidget(left)
         split.addWidget(right)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        split.setSizes([640, 440])
-        left.setMinimumWidth(380)
-        right.setMinimumWidth(300)
+        split.setStretchFactor(0, 1)        # lebar lebih ke daftar; urutan kunci (satu kolom) cukup selebar isinya
+        split.setStretchFactor(1, 0)
+        split.setSizes([700, 380])
+        self.left, self.right = left, right
+        self.t_paket.setMinimumHeight(110)
+        self.t_mapel.setMinimumHeight(170)
+        self._tegak = None
+        self.set_lebar(1200)
 
         self.empty = EmptyState("key", "Belum ada paket kunci jawaban",
                                 "Satu paket (mis. FSN PROVINSI PAKET 1) bisa dipakai banyak event. Buat paket, "
@@ -435,6 +428,36 @@ class PaketPage(QWidget):
         self.stack.addWidget(self.empty)
         self.stack.addWidget(split)
         root.addWidget(self.stack, 1)
+
+    def set_lebar(self, lebar):
+        """Lebar halaman yang tersedia (dari jendela). Sempit: urutan kunci pindah ke bawah daftar (atas-bawah,
+        halaman bisa digulir) supaya panel kiri dan kanan tidak saling menimpa."""
+        self._avail = lebar
+        tegak = lebar < TEGAK
+        if tegak != self._tegak:
+            self._tegak = tegak
+            self.split.setOrientation(Qt.Vertical if tegak else Qt.Horizontal)
+            if tegak:
+                self.left.setMinimumWidth(0)
+                self.right.setMinimumWidth(0)
+                self.split.setSizes([620, 520])
+            else:
+                self.left.setMinimumWidth(360)
+                self.right.setMinimumWidth(270)
+                self.split.setSizes([700, 380])
+            self._atur_gulir_kunci()
+        for f in getattr(self, "_fits", ()):
+            f.fit()
+
+    def _atur_gulir_kunci(self):
+        """Lebar (berdampingan): urutan kunci bergulir sendiri di panel kanan. Sempit (atas-bawah, halaman sudah
+        bergulir): urutan kunci tampil penuh tanpa gulir sendiri, supaya tidak ada gulir bertumpuk."""
+        if self._tegak:
+            self.k_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.k_scroll.setMinimumHeight(self.kview.minimumHeight() + 2 * self.k_scroll.frameWidth())
+        else:
+            self.k_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.k_scroll.setMinimumHeight(0)
 
     @staticmethod
     def _section(title, buttons):
@@ -548,6 +571,8 @@ class PaketPage(QWidget):
             self.k_title.setText("")
             self.k_sub.setText("")
             self.b_k_pdf.setEnabled(False)
+            self.kview.set_kunci("")
+            self._atur_gulir_kunci()
             self._kode_buttons()
             return
         self.kode_title.setText(f"Kode naskah · {m['nama']}")
@@ -574,6 +599,7 @@ class PaketPage(QWidget):
         self.b_k_pdf.setEnabled(bool(m["sumber"]) and Path(m["sumber"]).exists())
         self.b_k_pdf.setToolTip(m["sumber"] or "Kunci ini tidak diimpor dari PDF")
         self.kview.set_kunci(m["kunci"])
+        self._atur_gulir_kunci()
         self.k_stack.setCurrentWidget(self.k_scroll)
         self.k_scroll.verticalScrollBar().setValue(0)
 

@@ -14,21 +14,23 @@ from pathlib import Path
 from PySide6.QtCore import QMarginsF, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QPageLayout, QPageSize, QTextDocument
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHeaderView, QLabel, QMenu, QMessageBox, QSplitter,
-                               QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHeaderView, QLabel, QMenu, QMessageBox, QSizePolicy,
+                               QSplitter, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget)
 
 from app import theme
 from app.colors import paint
 from app.paket_page import ringkas_kode
-from app.widgets import setup_table, toolbar
+from app.widgets import ShortText, ToolbarFit, setup_table, toolbar
 from ljk import export as EX
 from ljk import service as SV
 
 STATUS_TONE = {"OK": "ok", "Perlu cek": "warn", "Sudah dicek": "info", "Gagal": "error", "Belum dinilai": "error"}
 SORT = Qt.UserRole + 5
-BELUM = "belum"
+BELUM = SV.BELUM
 BIRU, MERAH = "#1d3fcf", "#d01f1f"          # cetak nilai: jawaban benar / salah & kosong
 PER_BARIS = 15                              # nomor per baris di cetak nilai
+TEGAK = 900             # lebar halaman di bawah ini: daftar event di atas daftar mata pelajaran
+PETUNJUK_MIN = 1150     # lebar halaman minimal untuk menampilkan teks petunjuk di atas tabel peserta
 
 
 def angka(x):
@@ -97,6 +99,10 @@ class NilaiPage(QWidget):
         bar.addStretch()
         bar.addWidget(self.b_hitung)
         v.addLayout(bar)
+        # jendela sempit: teks kotak centang dipendekkan, tombol jadi ikon saja (nama di tooltip)
+        self._avail = 1200
+        self._fit = ToolbarFit(self, bar, (ShortText(self.chk_semua, "1 file"), self.b_hitung, self.b_ekspor,
+                                           self.b_cetak), lambda: self._avail)
 
         # ---- atas: event | mata pelajaran
         self.t_event = QTableWidget(0, 4)
@@ -128,11 +134,13 @@ class NilaiPage(QWidget):
             bv.addWidget(table, 1)
             return w
 
-        top = QSplitter(Qt.Horizontal)
+        top = self.top = QSplitter(Qt.Horizontal)
         top.setChildrenCollapsible(False)
         top.addWidget(box("Event", self.t_event))
         top.addWidget(box("Mata pelajaran", self.t_mapel))
         top.setSizes([520, 620])
+        self.t_event.setMinimumHeight(120)
+        self.t_mapel.setMinimumHeight(120)
 
         # ---- bawah: peserta
         bottom = QWidget()
@@ -142,11 +150,17 @@ class NilaiPage(QWidget):
         head = toolbar(8)
         self.p_title = _label("Peserta")
         self.p_info = _label("", "muted")
-        head.addWidget(self.p_title)
-        head.addWidget(self.p_info)
-        head.addStretch()
-        hint = _label("Ctrl/Shift+klik: pilih beberapa peserta  ·  klik dua kali: buka lembar di panel cek", "muted")
-        head.addWidget(hint)
+        # teks panjang tidak boleh memaksa lebar halaman (terpotong saja bila sempit)
+        for lb in (self.p_title, self.p_info):
+            lb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            lb.setMinimumWidth(40)
+        head.addWidget(self.p_title, 2)
+        head.addWidget(self.p_info, 3)
+        self.hint = _label("Ctrl/Shift+klik: pilih beberapa peserta  ·  klik dua kali: buka lembar di panel cek",
+                           "muted")
+        self.hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        head.addWidget(self.hint, 4)
         bv.addLayout(head)
         cols = ["No", "Tgl. periksa", "Nomor peserta", "Nama peserta", "Nilai", "B", "S", "K", "Kode naskah",
                 "Status", "Jawaban", "Kunci"]
@@ -167,6 +181,8 @@ class NilaiPage(QWidget):
         self._mono = mono
         bv.addWidget(self.t_peserta, 1)
 
+        self.t_peserta.setMinimumHeight(200)
+        self.t_peserta.setToolTip("Ctrl/Shift+klik: pilih beberapa peserta · klik dua kali: buka lembar di panel cek")
         split = QSplitter(Qt.Vertical)
         split.setChildrenCollapsible(False)
         split.addWidget(top)
@@ -175,6 +191,21 @@ class NilaiPage(QWidget):
         split.setStretchFactor(1, 5)
         split.setSizes([250, 560])
         v.addWidget(split, 1)
+        self._tegak = None
+        self.set_lebar(1200)
+
+    def set_lebar(self, lebar):
+        """Lebar halaman yang tersedia (dari jendela). Sempit: daftar event di atas daftar mata pelajaran dan teks
+        petunjuk disembunyikan (tetap ada di tooltip tabel), supaya tidak ada yang saling menimpa."""
+        self._avail = lebar
+        self.hint.setVisible(lebar >= PETUNJUK_MIN)
+        self._fit.fit()
+        tegak = lebar < TEGAK
+        if tegak == self._tegak:
+            return
+        self._tegak = tegak
+        self.top.setOrientation(Qt.Vertical if tegak else Qt.Horizontal)
+        self.top.setSizes([200, 220] if tegak else [520, 620])
 
     # ---- data
     def summary(self):
@@ -251,45 +282,9 @@ class NilaiPage(QWidget):
         self._mapel_selected()
 
     def _build_groups(self, eid):
-        """Mata pelajaran event (semua mata pelajaran paketnya) beserta lembarnya, plus kelompok Belum dinilai."""
-        views = SV.event_views(self.db, eid)
-        paket = self.db.event_paket(eid)
-        groups, kode2g = [], {}
-        if paket is not None:
-            for m in self.db.mapel(paket["id"]):
-                g = {"key": ("m", m["id"]), "nama": m["nama"], "kode": list(m["kode"]), "jumlah": len(m["kunci"]),
-                     "views": []}
-                groups.append(g)
-                for k in m["kode"]:
-                    kode2g[k] = g
-        else:                                               # event lama: kunci per event, dikelompokkan per bidang
-            by = {}
-            for s in self.db.naskah_lama(eid):
-                g = by.get(s.bidang.casefold())
-                if g is None:
-                    g = by[s.bidang.casefold()] = {"key": ("b", s.bidang.casefold()), "nama": s.bidang, "kode": [],
-                                                   "jumlah": s.jumlah, "views": []}
-                    groups.append(g)
-                g["kode"].append(s.kode)
-                kode2g[s.kode] = g
-        belum = {"key": BELUM, "nama": "Belum dinilai", "kode": [], "jumlah": 0, "views": []}
-        for v in views:
-            if v.skor is None:
-                belum["views"].append(v)
-                continue
-            g = kode2g.get(v.row["kode"])
-            if g is None:                                   # kode sudah tidak ada di paket, tapi punya kunci beku
-                nama = v.soal.bidang
-                g = next((x for x in groups if x["nama"].casefold() == nama.casefold()), None)
-                if g is None:
-                    g = {"key": ("x", nama.casefold()), "nama": nama, "kode": [], "jumlah": v.soal.jumlah, "views": []}
-                    groups.append(g)
-                if v.row["kode"] not in g["kode"]:
-                    g["kode"].append(v.row["kode"])
-            g["views"].append(v)
-        if belum["views"]:
-            groups.append(belum)
-        return groups
+        """Mata pelajaran event (semua mata pelajaran paketnya) beserta lembarnya, plus kelompok Belum dinilai
+        (pembagian yang sama dengan dropdown Bidang di tab Scan & nilai)."""
+        return SV.kelompok_bidang(self.db, eid)
 
     def _mapel_selected(self):
         rows = self.t_mapel.selectionModel().selectedRows()

@@ -92,9 +92,13 @@ tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampil
    Di tab **Kunci jawaban** event: paket yang dipakai, daftar kode naskahnya beserta jumlah lembar per kode,
    **Ganti paket**, dan kode naskah server/lembar yang belum ada di paket. Event yang dibuat sebelum ada paket
    tetap memakai kunci lamanya sampai memilih paket (kunci lama tidak dihapus).
-3. **Scan & nilai** (cek manual ada di sini juga): **Tambah foto** (kanan atas; pilih foto atau satu
-   folder) -> bila event belum memakai paket kunci, panitia diminta **memilih paket dulu** (kolom *Cocok*
-   membandingkan kode naskah paket dengan kode di server/lembar event); setelah itu foto diproses otomatis. Kartu **Semua / Perlu cek / Gagal / Sudah dicek / OK** menghitung lembar
+3. **Scan & nilai** (cek manual ada di sini juga): **Tambah foto** (kanan atas; pilih foto, atau satu folder
+   **termasuk semua sub-foldernya**, mis. `FSN NIAS\SMP` yang berisi satu sub-folder per bidang: sebelum diproses
+   tampil ringkasan jumlah foto per sub-folder) -> bila event belum memakai paket kunci, panitia diminta **memilih paket dulu** (kolom *Cocok*
+   membandingkan kode naskah paket dengan kode di server/lembar event); setelah itu foto diproses otomatis.
+   Dropdown **Bidang** di atas antrean berisi semua bidang paket kunci (dengan jumlah lembarnya): memilih satu
+   bidang menyaring antrean, kartu hitung, dan "simpan lalu lanjut" ke bidang itu; *Semua bidang* menampilkan
+   antrean berkelompok dengan judul per bidang (lembar gagal / kode tak terdaftar di kelompok terakhir). Kartu **Semua / Perlu cek / Gagal / Sudah dicek / OK** menghitung lembar
    sekaligus menyaring antrean di kiri (nama, nilai, catatan pertama; urut nomor, nilai, atau kode naskah).
    Kalimat di bawah nama event menyebut berapa lembar siap diekspor dan apa yang masih menahan.
    Pilih lembar di antrean -> gambar cek & data tampil di kanan. Soal yang ragu/ganda muncul di kotak
