@@ -66,12 +66,16 @@ Data aplikasi (database `ljk.db`, gambar cek, potongan tulisan tangan) disimpan 
 **`%LOCALAPPDATA%\LJK Reader`** (tombol "Buka folder data" di aplikasi), di luar folder program
 sehingga aman saat aplikasi diperbarui. Documents tidak dipakai karena di laptop ini diblokir
 "Controlled folder access" Windows. Data versi lama (folder `data/`) otomatis disalin saat pertama dibuka.
-Tampilan bergaya "lembar di dalam bingkai": bilah atas (cari lembar dengan Ctrl+K, status server, **Sinkron**)
-dan daftar event di kiri berwarna abu-abu muda; isi halaman di lembar putih. Huruf IBM Plex Sans/Mono ikut
-dalam paket (`app/fonts`, lisensi OFL). Tema terang/gelap di kiri bawah.
-Jendela bisa diperkecil sampai 640 px (mis. setengah layar dengan Win + panah). Di bawah 1000 px daftar event
-dibuka lewat tombol panel di kiri judul dan tombol di kepala halaman menjadi ikon (namanya di tooltip); bila
-tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampilkan gambar di atas data.
+Tampilan bergaya "lembar di dalam bingkai": bilah atas (tombol sidebar, logo, status server) dan sidebar
+di kiri (daftar event, lalu menu **Sinkron / Kunci jawaban / Nilai hasil**) berwarna abu-abu muda; isi halaman
+di lembar putih. Huruf IBM Plex Sans/Mono ikut dalam paket (`app/fonts`, lisensi OFL). Tema terang/gelap di
+kiri bawah.
+**Tombol sidebar** (ikon panel di kiri logo, atau **Ctrl+B**) menutup sidebar sehingga halaman tampil penuh;
+klik lagi untuk membukanya. Keadaannya diingat saat aplikasi dibuka lagi.
+Jendela bisa diperkecil sampai 640 px (mis. setengah layar dengan Win + panah). Di bawah 1000 px sidebar
+dibuka sebagai panel melayang lewat tombol yang sama dan tombol di kepala halaman menjadi ikon (namanya di
+tooltip); bila tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampilkan gambar di
+atas data.
 
 1. **Event** (panel kiri): **+** -> isi nama event & tanggal. Menu **⋯** di samping judul "Event" berisi
    ambil kompetisi dari server, kirim event ke server, ubah, dan hapus event.
@@ -100,6 +104,11 @@ tab Scan & nilai sempit, antrean pindah ke atas panel cek dan panel cek menampil
    bidang menyaring antrean, kartu hitung, dan "simpan lalu lanjut" ke bidang itu; *Semua bidang* menampilkan
    antrean berkelompok dengan judul per bidang (lembar gagal / kode tak terdaftar di kelompok terakhir). Kartu **Semua / Perlu cek / Gagal / Sudah dicek / OK** menghitung lembar
    sekaligus menyaring antrean di kiri (nama, nilai, catatan pertama; urut nomor, nilai, atau kode naskah).
+   **Cari peserta** (kotak di bawah dropdown Bidang, atau Ctrl+K / Ctrl+F dari mana saja): ketik nama atau
+   nomor peserta; dicari di **semua lembar event yang dibuka**, apa pun status dan bidangnya (kartu & bidang
+   tidak dipakai selama kotak terisi; hasil dikelompokkan per bidang dengan status tiap lembar). Beberapa kata
+   boleh, mis. "michele rambe". Enter membuka hasil pertama; panah bawah pindah ke daftar hasil. Mengosongkan
+   kotak, memilih kartu, atau memilih bidang mengakhiri pencarian.
    Kalimat di bawah nama event menyebut berapa lembar siap diekspor dan apa yang masih menahan.
    Pilih lembar di antrean -> gambar cek & data tampil di kanan. Soal yang ragu/ganda muncul di kotak
    **Soal N** dengan tombol A-E / Kosong / Ganda (atau tekan A-E di papan ketik); klik catatan untuk
@@ -127,12 +136,19 @@ ditarik ke event desktop:
 
 1. **Hubungkan server** (bilah atas, kanan): alamat server + akun superadmin. Token login disimpan,
    kata sandi tidak.
-2. Buka event -> **Sinkron** (bilah atas, kanan). Pertama kali, event dihubungkan ke
-   kompetisi server (baru atau yang sudah ada; lihat bagian berikut).
+2. Buka event -> menu **Sinkron** (sidebar, kelompok *Menu*, di atas Kunci jawaban; keterangannya nama event
+   yang akan disinkron, redup bila belum ada event atau proses baca masih berjalan). Halaman Scan & nilai event
+   itu ditampilkan. Pertama kali, event dihubungkan ke kompetisi server (baru atau yang sudah ada; lihat bagian
+   berikut).
 3. Lembar yang sudah dikonfirmasi/ditandai admin daerah diunduh dan dibaca ulang di laptop
    (mesin yang sama). Data yang dikoreksi admin daerah dipakai, hasil baca asli tetap tampil
    sebagai "terbaca: …" di panel cek. Catatan server (nomor tidak terdaftar, duplikat, koreksi,
-   peserta baru, kualitas foto < 85%) masuk ke daftar perlu cek. Lembar dari HP bertanda "HP" di antrean;
+   peserta baru, kualitas foto < 85%) masuk ke daftar perlu cek. Pengecualian: **keyakinan baca server 85% ke
+   atas** berarti nomor terbaca jelas, jadi catatan *"nomor tidak ada di daftar peserta"* hanya tampil sebagai
+   info abu-abu di panel cek dan tidak membuat lembar Perlu cek (biasanya daftar peserta di server belum
+   lengkap). Catatan server lain (nomor ganda / sudah pernah dikirim, kode naskah beda dengan bidang yang dipilih,
+   isian setelah soal terakhir, nomor belum terbaca lengkap) dan catatan hasil baca ulang desktop tetap membuat
+   Perlu cek berapa pun keyakinannya. Aturan ini langsung berlaku untuk lembar yang sudah ditarik. Lembar dari HP bertanda "HP" di antrean;
    lokasi, pengirim, dan skor kualitas foto tampil di baris **Dikirim** panel cek.
 4. Lembar yang sudah dicek dilaporkan ke server pada sinkron berikutnya (terlihat di panel admin).
 5. Lembar server yang pernah ditarik tetapi tidak ada lagi di event (mis. terhapus) ditawarkan untuk

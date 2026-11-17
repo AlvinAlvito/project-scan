@@ -293,6 +293,11 @@ def mono(size=10):
     return f
 
 
+def setelan():
+    """Pengaturan tampilan aplikasi yang diingat antar-sesi (mis. sidebar tertutup)."""
+    return QSettings("POSI", "LJK Reader")
+
+
 def saved():
     v = QSettings("POSI", "LJK Reader").value("tema", "gelap")
     return v if v in PALETTES else "gelap"

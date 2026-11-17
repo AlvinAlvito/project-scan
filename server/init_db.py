@@ -33,9 +33,10 @@ def main():
 
     ensure_database()
     from app import models as M
-    from app.db import Base, SessionLocal, engine
+    from app.db import Base, SessionLocal, engine, upgrade_schema
     from app.security import hash_password
     Base.metadata.create_all(engine)
+    upgrade_schema()
     print("Tabel siap.")
     if a.superadmin:
         pw = a.password or getpass.getpass("Kata sandi superadmin: ")

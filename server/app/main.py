@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import WEB_DIR as WEB
-from .db import Base, engine
+from .db import Base, engine, upgrade_schema
 from .routers import admin, auth, files, scan, sync
 
 app = FastAPI(title="LJK Reader Online", version="1.0")
@@ -27,6 +27,7 @@ for r in (auth.router, admin.router, scan.router, sync.router, files.router):
 @app.on_event("startup")
 def _create_tables():
     Base.metadata.create_all(engine)
+    upgrade_schema()
 
 
 @app.get("/", include_in_schema=False)

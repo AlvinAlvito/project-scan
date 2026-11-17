@@ -200,7 +200,9 @@ function renderBidang(k, el) {
   const edit = async b => {
     const master = await api("/api/admin/master-bidang");
     const items = master.map(m => ({ id: m.id, label: m.nama, sub: [m.kode_naskah && `kode ${m.kode_naskah}`, m.jumlah_soal && `${m.jumlah_soal} soal`].filter(Boolean).join(" · "), m }));
-    const cur = b ? (items.find(i => i.label === b.nama) || { id: 0, label: b.nama }) : null;
+    // nama master boleh kembar (beda kode naskah): cocokkan nama + kode dulu, baru nama saja
+    const cur = b ? (items.find(i => i.label === b.nama && i.m.kode_naskah === b.kode_naskah)
+      || items.find(i => i.label === b.nama) || { id: 0, label: b.nama }) : null;
     return modal({
     title: b ? "Ubah bidang" : "Tambah bidang",
     html: `<div class="field"><span>Bidang</span><div id="ss-bidang"></div>
@@ -300,14 +302,14 @@ async function masterBidang() {
   const list = await api("/api/admin/master-bidang");
   page.innerHTML = `<div class="page-head"><div><h1>Master bidang</h1><p class="muted">Daftar bidang baku. Saat menambah bidang ke kompetisi cukup pilih dari sini.</p></div>
       <button class="btn primary" id="b-add">${icon("plus")}Tambah bidang</button></div>
-    <div class="toolbar"><input class="input" id="q" placeholder="Cari bidang" style="width:100%;max-width:340px"></div>
+    <div class="toolbar"><input class="input" id="q" placeholder="Cari bidang atau kode naskah" style="width:100%;max-width:340px"></div>
     ${list.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Nama bidang</th><th>Kode naskah bawaan</th><th class="num">Jumlah soal bawaan</th><th class="num">Dipakai</th><th></th></tr></thead><tbody id="rows">
-      ${list.map(m => `<tr data-n="${esc(m.nama.toLowerCase())}"><td><b>${esc(m.nama)}</b></td><td class="mono">${esc(m.kode_naskah || "—")}</td>
+      ${list.map(m => `<tr data-n="${esc(`${m.nama} ${m.kode_naskah}`.toLowerCase())}"><td><b>${esc(m.nama)}</b></td><td class="mono">${esc(m.kode_naskah || "—")}</td>
         <td class="num">${m.jumlah_soal || "—"}</td><td class="num">${m.dipakai ? `${m.dipakai} kompetisi` : `<span class="muted">—</span>`}</td>
         <td class="actions"><button class="btn ghost icon-only" data-e="${m.id}" aria-label="Ubah">${icon("pencil")}</button>
         <button class="btn ghost icon-only danger" data-d="${m.id}" aria-label="Hapus">${icon("trash")}</button></td></tr>`).join("")}</tbody></table></div>`
       : `<div class="card empty">${icon("book")}<b>Master bidang masih kosong</b><span>Tambahkan bidang yang biasa diujikan, mis. Matematika SMA, Fisika SMP.</span></div>`}
-    <p class="hint">Kode naskah dan jumlah soal di sini hanya nilai awal; tetap bisa diubah per kompetisi. Mengubah atau menghapus master tidak mengubah kompetisi yang sudah ada.</p>`;
+    <p class="hint">Nama bidang boleh sama asal kode naskahnya berbeda; satu kode naskah hanya untuk satu bidang. Kode naskah dan jumlah soal di sini hanya nilai awal; tetap bisa diubah per kompetisi. Mengubah atau menghapus master tidak mengubah kompetisi yang sudah ada.</p>`;
   const q = $("#q");
   q.oninput = () => { const v = q.value.trim().toLowerCase(); page.querySelectorAll("#rows tr").forEach(tr => { tr.hidden = !tr.dataset.n.includes(v); }); };
   const edit = m => modal({

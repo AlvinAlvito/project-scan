@@ -656,6 +656,8 @@ class ReviewTab(QWidget):
         lebih = SV.info_lebih(view.skor, view.soal)
         if lebih:
             items.append({"text": lebih, "key": "info", "x": None, "y": None})
+        # nomor tak ada di daftar peserta server, keyakinan baca tinggi: hanya info (aturan sama dengan status)
+        items += [{"text": t, "key": "info", "x": None, "y": None} for t in SV.info_server(self.cur)]
         for it in items:
             li = QListWidgetItem(it["text"])
             li.setData(Qt.UserRole, it)

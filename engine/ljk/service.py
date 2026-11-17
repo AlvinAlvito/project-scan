@@ -243,6 +243,12 @@ def duplicate_nomor(rows):
 
 
 KUALITAS_MIN = 85      # skor kualitas foto dari HP di bawah ini ikut dilaporkan
+# Keyakinan baca server (0-100, server/app/reading.py) mulai angka ini: nomor peserta terbaca jelas, jadi catatan
+# server "nomor tidak ada di daftar peserta" hanya info dan tidak membuat lembar Perlu cek (biasanya daftar peserta
+# di server belum lengkap). Catatan server lain (nomor ganda, kode naskah beda bidang, isian setelah soal terakhir,
+# nomor belum terbaca lengkap) dan catatan baca ulang desktop tetap Perlu cek berapa pun keyakinannya.
+KEYAKINAN_MIN = 85
+_NOMOR_TAK_TERDAFTAR = re.compile(r"Nomor peserta \S+ tidak ada di daftar peserta\.?")
 
 
 def server_info(row):
@@ -253,12 +259,32 @@ def server_info(row):
         return {}
 
 
+def catatan_server_info(srv, catatan):
+    """True bila catatan server ini cukup jadi info (lihat KEYAKINAN_MIN). Lembar tanpa nilai keyakinan
+    (server lama) tidak dilonggarkan."""
+    k = srv.get("keyakinan")
+    return (isinstance(k, (int, float)) and k >= KEYAKINAN_MIN
+            and _NOMOR_TAK_TERDAFTAR.fullmatch(str(catatan).strip()) is not None)
+
+
+def info_server(row):
+    """Info (bukan catatan perlu cek) dari server untuk panel cek: nomor peserta yang tidak ada di daftar peserta
+    server pada lembar berkeyakinan baca tinggi. [] untuk foto lokal dan lembar yang sudah dicek."""
+    if row["dicek"]:
+        return []
+    srv = server_info(row)
+    return [f"Info server: {c} Keyakinan baca {srv['keyakinan']}% (nomor terbaca jelas), jadi tidak perlu dicek; "
+            "kemungkinan daftar peserta di server belum lengkap."
+            for c in srv.get("catatan", []) if catatan_server_info(srv, c)]
+
+
 def server_issues(row):
     """Catatan dari server & admin daerah yang perlu dicek panitia pusat."""
     srv = server_info(row)
     if not srv:
         return []
-    out = [{"text": f"Server: {c}", "key": "server", "x": None, "y": None} for c in srv.get("catatan", [])]
+    out = [{"text": f"Server: {c}", "key": "server", "x": None, "y": None} for c in srv.get("catatan", [])
+           if not catatan_server_info(srv, c)]
     kon = srv.get("konfirmasi") or {}
     oleh = kon.get("oleh") or "admin daerah"
     label = {"nama": "nama", "nomor": "nomor peserta", "kode": "kode naskah"}

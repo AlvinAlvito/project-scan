@@ -79,10 +79,12 @@ class Bidang(Base):
 
 class MasterBidang(Base):
     """Daftar bidang baku. Saat menambah bidang ke kompetisi cukup memilih dari sini;
-    kode naskah & jumlah soal di sini hanya nilai awal yang boleh diubah per kompetisi."""
+    kode naskah & jumlah soal di sini hanya nilai awal yang boleh diubah per kompetisi.
+    Nama boleh sama (mis. MATEMATIKA SD kode 312 dan 314); yang unik kode naskah bila diisi
+    (dicek di routers/admin.py, karena kode boleh kosong)."""
     __tablename__ = "master_bidang"
     id: Mapped[int] = mapped_column(primary_key=True)
-    nama: Mapped[str] = mapped_column(String(120), unique=True)
+    nama: Mapped[str] = mapped_column(String(120))
     kode_naskah: Mapped[str] = mapped_column(String(10), default="")
     jumlah_soal: Mapped[int] = mapped_column(Integer, default=0)
 

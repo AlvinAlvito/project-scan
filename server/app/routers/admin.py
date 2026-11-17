@@ -180,25 +180,58 @@ def _master_out(m: M.MasterBidang, dipakai=0):
 
 @router.get("/master-bidang")
 def list_master_bidang(db: Session = Depends(get_db)):
-    pakai = dict(db.execute(select(M.Bidang.nama, func.count()).group_by(M.Bidang.nama)).all())
-    return [_master_out(m, pakai.get(m.nama, 0))
-            for m in db.scalars(select(M.MasterBidang).order_by(M.MasterBidang.nama))]
+    masters = db.scalars(select(M.MasterBidang).order_by(M.MasterBidang.nama, M.MasterBidang.kode_naskah)).all()
+    # Bidang kompetisi per (nama, kode naskah). Nama master boleh kembar, jadi master yang namanya kembar
+    # dicocokkan lewat kode naskahnya; master tanpa kode mendapat sisanya (kode yang bukan milik master lain).
+    pakai = {}
+    for nama, kode, n in db.execute(select(M.Bidang.nama, M.Bidang.kode_naskah, func.count())
+                                    .group_by(M.Bidang.nama, M.Bidang.kode_naskah)):
+        key = (" ".join(nama.split()).casefold(), kode)
+        pakai[key] = pakai.get(key, 0) + n
+    kembar = {}
+    for m in masters:
+        kembar.setdefault(m.nama.casefold(), set()).add(m.kode_naskah)
+
+    def dipakai(m):
+        nm = m.nama.casefold()
+        if len(kembar[nm]) == 1:
+            return sum(n for (n2, _), n in pakai.items() if n2 == nm)
+        if m.kode_naskah:
+            return pakai.get((nm, m.kode_naskah), 0)
+        return sum(n for (n2, k), n in pakai.items() if n2 == nm and k not in kembar[nm])
+
+    return [_master_out(m, dipakai(m)) for m in masters]
+
+
+def _cek_kode_master(db, kode, kecuali=None):
+    """Kode naskah bawaan unik di master (nama bidang boleh sama). Kode kosong tidak dicek."""
+    if not kode:
+        return
+    q = select(M.MasterBidang).where(M.MasterBidang.kode_naskah == kode)
+    if kecuali is not None:
+        q = q.where(M.MasterBidang.id != kecuali)
+    lain = db.scalars(q).first()
+    if lain is not None:
+        raise HTTPException(409, f"Kode naskah {kode} sudah dipakai bidang '{lain.nama}' di master.")
 
 
 @router.post("/master-bidang")
 def create_master_bidang(body: MasterBidangIn, db: Session = Depends(get_db)):
-    m = M.MasterBidang(nama=" ".join(body.nama.split()), kode_naskah=body.kode_naskah.strip(),
-                       jumlah_soal=body.jumlah_soal)
+    kode = body.kode_naskah.strip()
+    _cek_kode_master(db, kode)
+    m = M.MasterBidang(nama=" ".join(body.nama.split()), kode_naskah=kode, jumlah_soal=body.jumlah_soal)
     db.add(m)
-    _commit(db, f"Bidang '{body.nama}' sudah ada di master.")
+    _commit(db, f"Bidang '{body.nama}' gagal disimpan.")
     return _master_out(m)
 
 
 @router.put("/master-bidang/{mid}")
 def update_master_bidang(mid: int, body: MasterBidangIn, db: Session = Depends(get_db)):
     m = _get(db, M.MasterBidang, mid, "Bidang")
-    m.nama, m.kode_naskah, m.jumlah_soal = " ".join(body.nama.split()), body.kode_naskah.strip(), body.jumlah_soal
-    _commit(db, f"Bidang '{body.nama}' sudah ada di master.")
+    kode = body.kode_naskah.strip()
+    _cek_kode_master(db, kode, kecuali=mid)
+    m.nama, m.kode_naskah, m.jumlah_soal = " ".join(body.nama.split()), kode, body.jumlah_soal
+    _commit(db, f"Bidang '{body.nama}' gagal disimpan.")
     return _master_out(m)
 
 

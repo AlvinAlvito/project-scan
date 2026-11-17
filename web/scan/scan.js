@@ -363,6 +363,7 @@ function renderHasil(mode = "") {
   } else {
     html += `<div class="actions">
       <button class="btn primary big" id="h-ok">${icon("check")}Benar, lanjut scan</button>
+      ${state.lembarFromHistory ? "" : `<button class="btn ghost kecil" id="h-ok-bidang">${icon("check")}Benar, ganti bidang</button>`}
       <div class="row"><button class="btn" id="h-fix">${icon("pencil")}Perbaiki data</button>
       <button class="btn ${notTerdaftar ? "primary" : ""}" id="h-new">${icon("userPlus")}Peserta baru</button></div>
       <button class="btn danger" id="h-del">${icon("trash")}Hapus & foto ulang</button>
@@ -373,6 +374,7 @@ function renderHasil(mode = "") {
     html: `<img src="${fileUrl(lb.urls.cek)}" style="width:100%;border-radius:10px" alt="Gambar hasil baca">` }));
   $("#h-back") && ($("#h-back").onclick = () => show("riwayat"));
   $("#h-ok") && ($("#h-ok").onclick = () => konfirmasi({ aksi: "benar" }, true));
+  $("#h-ok-bidang") && ($("#h-ok-bidang").onclick = () => konfirmasi({ aksi: "benar" }, "pilih"));
   $("#h-fix") && ($("#h-fix").onclick = () => renderHasil("perbaiki"));
   $("#h-new") && ($("#h-new").onclick = () => renderHasil("baru"));
   $("#h-del") && ($("#h-del").onclick = () => removeAndRetake(lb, true));
@@ -388,12 +390,24 @@ function renderHasil(mode = "") {
   };
 }
 
+// next: true = kembali ke kamera (bidang sama), "pilih" = selesai bidang ini, ke halaman pilih bidang
 async function konfirmasi(body, next) {
   try {
     const lb = await api(`/api/scan/lembar/${state.lembar.id}/konfirmasi`, { method: "POST", body });
     state.lembar = lb;
-    toast(lb.status === "dikonfirmasi" ? "Tersimpan. Siap scan lembar berikutnya." : "Tersimpan dan ditandai untuk dicek pusat.");
+    const ok = lb.status === "dikonfirmasi";
     refreshPending();
+    if (next === "pilih") {
+      // Pilihan bidang dikosongkan supaya "Mulai scan" baru aktif setelah bidang berikutnya dipilih
+      // (mencegah lanjut memotret dengan bidang lama).
+      toast(ok ? "Tersimpan. Pilih bidang berikutnya." : "Tersimpan dan ditandai untuk dicek pusat. Pilih bidang berikutnya.");
+      state.sel.bidang = null;
+      saveSel();
+      renderPilih();
+      show("pilih");
+      return;
+    }
+    toast(ok ? "Tersimpan. Siap scan lembar berikutnya." : "Tersimpan dan ditandai untuk dicek pusat.");
     if (next && !state.lembarFromHistory) show("kamera"); else renderHasil();
   } catch (e) { toast(e.message, true); }
 }

@@ -5,12 +5,13 @@ import os
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelectionModel, QRectF, QSize, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QRectF, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPainterPath
-from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QMenu, QMessageBox, QProgressBar, QSizePolicy, QSplitter, QStackedWidget,
-                               QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                               QListWidget, QListWidgetItem, QMenu, QMessageBox, QProgressBar, QSizePolicy, QSplitter,
+                               QStackedWidget, QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
+from app import icons
 from app import server_client as SC
 from app import server_link as SL
 from app import theme
@@ -33,6 +34,18 @@ MEJA_TEGAK = 860                # lebar tab di bawah ini: antrean di atas panel 
 # dikuatkan supaya isian tipis tetap terbaca. Server selalu memakai "standar".
 KONTRAS_PILIHAN = [("mati", "Kontras baca: mati"), ("rendah", "Kontras baca: rendah"),
                    ("standar", "Kontras baca: standar"), ("tinggi", "Kontras baca: tinggi")]
+
+
+def kata_cari(teks):
+    """Kata-kata yang diketik di kotak cari (huruf kecil, spasi berlebih dibuang)."""
+    return teks.casefold().split()
+
+
+def cocok_cari(row, kata):
+    """Lembar cocok bila nama atau nomor pesertanya memuat semua kata yang diketik (huruf besar/kecil sama),
+    mis. "michele rambe" cocok dengan MICHELE A RAMBE, "2001" cocok dengan nomor 20015."""
+    teks = f"{row['nama'] or ''} {row['nomor'] or ''}".casefold()
+    return all(k in teks for k in kata)
 
 
 class Worker(QThread):
@@ -265,6 +278,24 @@ class ScanTab(QWidget):
         brow.addWidget(self.bidang, 1)
         qv.addLayout(brow)
         self._bidang_key = None                     # None = semua bidang; selain itu str(kunci kelompok)
+        # cari peserta (nama / nomor peserta) di SEMUA lembar event ini: selama kotak terisi, kartu status dan
+        # bidang tidak dipakai, supaya peserta tetap ketemu apa pun status & bidangnya
+        self.cari = QLineEdit()
+        self.cari.setObjectName("search")
+        self.cari.setPlaceholderText("Cari nama atau nomor peserta")
+        self.cari.setToolTip("Cari di semua lembar event ini, semua status dan bidang (Ctrl+K)\n"
+                             "Enter: buka hasil pertama. Panah bawah: pindah ke daftar hasil.")
+        self.cari.setClearButtonEnabled(True)
+        self._cari_ikon = self.cari.addAction(icons.icon("search", theme.c("muted")), QLineEdit.LeadingPosition)
+        self._cari_timer = QTimer(self)             # tunggu ketikan berhenti sebentar sebelum menyaring
+        self._cari_timer.setSingleShot(True)
+        self._cari_timer.setInterval(180)
+        self._cari_timer.timeout.connect(self._terapkan_cari)
+        self.cari.textChanged.connect(lambda _t: self._cari_timer.start())
+        self.cari.returnPressed.connect(self._buka_hasil_pertama)
+        self.cari.installEventFilter(self)
+        theme.bus.changed.connect(lambda: self._cari_ikon.setIcon(icons.icon("search", theme.c("muted"))))
+        qv.addWidget(self.cari)
         head = toolbar(8)
         self.q_title = QLabel("")
         self.q_title.setProperty("role", "h2")
@@ -300,6 +331,7 @@ class ScanTab(QWidget):
         self.queue.customContextMenuRequested.connect(lambda pos: self.row_menu.exec(self.queue.mapToGlobal(pos)))
         self.queue.currentItemChanged.connect(self._queue_current)
         self.q_empty = QLabel("")
+        self.q_empty.setTextFormat(Qt.PlainText)    # berisi ketikan kotak cari
         self.q_empty.setProperty("role", "muted")
         self.q_empty.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         self.q_empty.setWordWrap(True)
@@ -330,7 +362,8 @@ class ScanTab(QWidget):
         ah.addWidget(theme.button("Semua foto di folder", "folder-plus", slot=self._add_folder))
         ah.addWidget(theme.button("Pilih foto", "image-plus", "primary", slot=self._add_files))
         self.empty = EmptyState("image-plus", "Belum ada lembar",
-                                "Tambahkan foto LJK, atau tarik lembar yang dikirim admin daerah lewat Sinkron.", add)
+                                "Tambahkan foto LJK, atau tarik lembar yang dikirim admin daerah lewat menu Sinkron "
+                                "di sidebar.", add)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self.desk)
@@ -347,6 +380,7 @@ class ScanTab(QWidget):
         self.kontras.setEnabled(event_id is not None and not self.busy())
         self._filter = None                         # dipilih ulang menurut isi event (lihat refresh)
         self._bidang_key = None                     # event lain: mulai dari semua bidang
+        self._kosongkan_cari()                      # pencarian berlaku untuk satu event saja
         self.refresh()
         self.review.load(event_id)
         if self.review.cur is not None and self._pos(self.review.cur["id"]) == 0 and self.queue.count():
@@ -394,6 +428,8 @@ class ScanTab(QWidget):
 
     # ---- antrean
     def set_filter(self, f):
+        """Pilih kartu penyaring (juga dari luar). Memilih kartu atau bidang mengakhiri pencarian."""
+        self._kosongkan_cari()
         self._filter = f
         self.refresh()
         if self.review.cur is not None and self._pos(self.review.cur["id"]) == 0 and self.queue.count():
@@ -403,6 +439,7 @@ class ScanTab(QWidget):
         if self._isi_bidang_jalan:
             return
         self._bidang_key = self.bidang.currentData()
+        self._kosongkan_cari()
         self.refresh()
         if self.review.cur is not None and self._pos(self.review.cur["id"]) == 0 and self._order:
             self._select(0)                         # lembar yang terbuka bukan bidang ini: buka lembar pertamanya
@@ -413,6 +450,7 @@ class ScanTab(QWidget):
         """Pilih bidang (None = semua bidang; selain itu kunci kelompok dari service.kelompok_bidang) dari luar,
         mis. saat lembar dibuka dari menu Nilai hasil."""
         self._bidang_key = None if key is None else str(key)
+        self._kosongkan_cari()
         self.refresh()
 
     def _isi_bidang(self, groups, total):
@@ -440,9 +478,55 @@ class ScanTab(QWidget):
         if 0 <= i < len(self._baris):
             self.queue.setCurrentRow(self._baris[i], QItemSelectionModel.ClearAndSelect)
 
+    # ---- cari peserta
     def set_query(self, text):
-        self._query = text.strip().lower()
-        self.refresh()
+        """Isi kotak cari dan langsung saring (tanpa menunggu jeda ketik)."""
+        self.cari.setText(text)
+        self._terapkan_cari()
+
+    def fokus_cari(self):
+        self.cari.setFocus(Qt.ShortcutFocusReason)
+        self.cari.selectAll()
+
+    def _terapkan_cari(self):
+        self._cari_timer.stop()
+        q = " ".join(kata_cari(self.cari.text()))
+        if q != self._query:
+            self._query = q
+            self.refresh()
+
+    def _kosongkan_cari(self):
+        """Akhiri pencarian tanpa memuat ulang antrean (pemanggil memuat ulang sendiri)."""
+        self._cari_timer.stop()
+        if self.cari.text():
+            self.cari.blockSignals(True)
+            self.cari.clear()
+            self.cari.blockSignals(False)
+        self._query = ""
+
+    def _buka_hasil_pertama(self):
+        """Enter di kotak cari: buka lembar pertama hasil pencarian."""
+        self._terapkan_cari()
+        if self._order:
+            self._select(0)
+
+    def eventFilter(self, obj, ev):
+        # panah bawah di kotak cari: pindah ke daftar hasil (lembar yang terbuka, atau hasil pertama)
+        if obj is self.cari and ev.type() == QEvent.KeyPress and ev.key() == Qt.Key_Down:
+            self._terapkan_cari()
+            if self._order:
+                if self.review.cur is None or not self._pos(self.review.cur["id"]):
+                    self._select(0)
+                self.queue.setFocus(Qt.OtherFocusReason)
+            return True
+        return super().eventFilter(obj, ev)
+
+    def _sorot_kartu(self, f):
+        """Sorot kartu penyaring yang aktif; None (sedang mencari) = tidak ada kartu yang tersorot."""
+        self.card_group.setExclusive(False)
+        for k, card in self.cards.items():
+            card.setChecked(k == f)
+        self.card_group.setExclusive(True)
 
     @staticmethod
     def _hitung(views):
@@ -478,16 +562,19 @@ class ScanTab(QWidget):
             self._filter = next((f for f in ("Perlu cek", "Gagal") if counts[f]), "Semua")
         for f, card in self.cards.items():
             card.set(counts[f])
-        self.cards[self._filter].setChecked(True)
         self.stack.setCurrentWidget(self.desk if views else self.empty)
 
-        rows = [v for v in pilih if self._filter == "Semua" or v.status == self._filter]
         if self._query:
-            rows = [v for v in rows if self._query in " ".join(
-                str(x) for x in (v.row["nama"], v.row["nomor"], v.row["kode"], Path(v.row["file"]).name,
-                                 SV.server_info(v.row).get("kota", ""))).lower()]
-        self.q_title.setText(("Semua lembar" if self._filter == "Semua" else self._filter) +
-                             (f" · {len(rows)} cocok" if self._query else ""))
+            # mencari: semua lembar event ini (semua status & bidang), dikelompokkan per bidang
+            kata = self._query.split()
+            rows = [v for v in views if cocok_cari(v.row, kata)]
+            sel = None
+            self._sorot_kartu(None)
+            self.q_title.setText(f"Hasil cari · {len(rows)}")
+        else:
+            rows = [v for v in pilih if self._filter == "Semua" or v.status == self._filter]
+            self._sorot_kartu(self._filter)
+            self.q_title.setText("Semua lembar" if self._filter == "Semua" else self._filter)
         # Semua bidang: dikelompokkan per bidang (judul + lembarnya); satu bidang: daftar biasa
         if sel is None and groups:
             masuk = {v.row["id"] for v in rows}
@@ -517,8 +604,9 @@ class ScanTab(QWidget):
         kosong = KOSONG[self._filter]
         if sel is not None and not sel["views"]:
             kosong = "Belum ada lembar untuk bidang ini."
-        self.q_empty.setText(f"Tidak ada lembar yang cocok dengan “{self._query}”." if self._query and not rows
-                             else kosong)
+        if self._query:
+            kosong = (f"Tidak ada peserta dengan nama atau nomor “{self.cari.text().strip()}” di event ini.")
+        self.q_empty.setText(kosong)
         self.q_stack.setCurrentWidget(self.queue if rows else self.q_empty)
         self.review.refresh_list()
         self._update_position()
@@ -536,7 +624,8 @@ class ScanTab(QWidget):
             "maks": f"/{4 * v.soal.jumlah}" if sk is not None and v.soal else "",
             "why": why,
             "meta": f"#{r['urutan']}" + (" · HP" if srv else ""),
-            "pill": v.status if self._filter == "Semua" and v.status != "OK" else None,
+            # status tampil bila antrean berisi campuran status (kartu Semua, atau hasil cari)
+            "pill": v.status if (self._filter == "Semua" or self._query) and v.status != "OK" else None,
         })
         it.setToolTip(f"#{r['urutan']} · {Path(r['file']).name}" +
                       "".join(f"\n{i['text']}" for i in v.issues))

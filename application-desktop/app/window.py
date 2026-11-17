@@ -1,6 +1,6 @@
-"""Jendela utama: bilah atas (merek, cari, server), sidebar kiri (daftar event, lalu menu Kunci jawaban), dan
-lembar putih di kanan berisi tab Kunci / Scan & Nilai (antrean + cek manual) / Latih untuk event terpilih, atau
-pustaka paket kunci jawaban (dipakai bersama oleh banyak event) saat menu Kunci jawaban dibuka."""
+"""Jendela utama: bilah atas (tombol buka/tutup sidebar, merek, server), sidebar kiri (daftar event, lalu menu
+Sinkron / Kunci jawaban / Nilai hasil), dan lembar putih di kanan berisi tab Kunci / Scan & Nilai (cari peserta,
+antrean + cek manual) / Latih untuk event terpilih, atau halaman menu (pustaka paket kunci, Nilai hasil)."""
 import html
 import shutil
 
@@ -25,8 +25,14 @@ SIDEBAR_W = 228
 TOPBAR_H = 48
 COUNT = Qt.UserRole + 1         # jumlah lembar perlu cek pada baris event (hanya event yang dibuka)
 # Jendela lebih sempit dari ini (mis. setengah layar laptop): sidebar disembunyikan dan dibuka sebagai panel
-# melayang lewat tombol di kiri judul, nama tab dipendekkan, tombol kepala halaman jadi ikon.
+# melayang lewat tombol di kiri logo, nama tab dipendekkan, tombol kepala halaman jadi ikon.
 SEMPIT = 1000
+# Menu sidebar (di bawah daftar event): kunci, keterangan. Sinkron = tindakan untuk event yang sedang dibuka.
+NAV = (("sinkron", "Laporkan lembar yang sudah dicek, lalu tarik LJK yang dikirim admin daerah lewat HP "
+                   "untuk event yang sedang dibuka"),
+       ("kunci", "Paket kunci jawaban: satu paket bisa dipakai banyak event"),
+       ("nilai", "Nilai peserta per event dan mata pelajaran, cetak nilai, ekspor Excel"))
+SIDEBAR_TUTUP = "tampilan/sidebar_tutup"        # pengaturan: sidebar ditutup (jendela lebar), diingat antar-sesi
 
 
 class KompetisiLoader(QThread):
@@ -137,7 +143,8 @@ class EventDelegate(QStyledItemDelegate):
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(option.rect).adjusted(0, 1, 0, -1)
         selected = option.state & QStyle.State_Selected
-        if selected or option.state & QStyle.State_MouseOver:
+        aktif = bool(option.state & QStyle.State_Enabled)       # menu Sinkron tanpa event / saat proses baca: redup
+        if aktif and (selected or option.state & QStyle.State_MouseOver):
             path = QPainterPath()
             path.addRoundedRect(r, 8, 8)
             p.fillPath(path, QColor(theme.c("side_sel" if selected else "side_hover")))
@@ -151,7 +158,7 @@ class EventDelegate(QStyledItemDelegate):
             p.setPen(QColor(theme.c("side_text")))
             p.drawText(QRectF(right - w, r.top() + 7, w, 20), Qt.AlignRight | Qt.AlignVCenter, str(n))
             right -= w + 10
-        p.setPen(QColor(theme.c("side_text")))
+        p.setPen(QColor(theme.c("side_text" if aktif else "side_muted")))
         text_r = QRectF(r.left() + 10, r.top() + 7, right - r.left() - 10, 20)
         p.drawText(text_r, Qt.AlignLeft | Qt.AlignVCenter,
                    p.fontMetrics().elidedText(nama, Qt.ElideRight, int(text_r.width())))
@@ -183,16 +190,19 @@ class MainWindow(QMainWindow):
         self.library = PaketPage(db)
         self.nilai = NilaiPage(db)
 
-        # ---- bilah atas: merek, cari lembar, server
+        # ---- bilah atas: tombol buka/tutup sidebar, merek, server
         top = QWidget()
         top.setObjectName("topbar")
         top.setAttribute(Qt.WA_StyledBackground, True)
         top.setFixedHeight(TOPBAR_H)
         th = QHBoxLayout(top)
-        th.setContentsMargins(20, 0, 16, 0)
+        th.setContentsMargins(12, 0, 16, 0)
         th.setSpacing(10)
+        self.btn_side = theme.button("", "panel-left", "ghost", slot=self._toggle_side)
+        self.btn_side.setFixedSize(34, 32)
+        self.btn_side.setIconSize(QSize(18, 18))
+        th.addWidget(self.btn_side)
         brand = QWidget()
-        brand.setFixedWidth(SIDEBAR_W - 20)
         bh = QHBoxLayout(brand)
         bh.setContentsMargins(0, 0, 0, 0)
         bh.setSpacing(10)
@@ -206,24 +216,12 @@ class MainWindow(QMainWindow):
         bh.addStretch()
         th.addWidget(brand)
         th.addStretch(1)
-        self.search = QLineEdit()
-        self.search.setObjectName("search")
-        self.search.setPlaceholderText("Cari peserta, nomor, atau kode naskah")
-        self.search.setToolTip("Saring antrean Scan & nilai (Ctrl+K)")
-        self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(160)
-        self.search.setMaximumWidth(548)
-        self._search_act = self.search.addAction(icons.icon("search", theme.c("muted")), QLineEdit.LeadingPosition)
-        self.search.textChanged.connect(self._search_changed)
-        th.addWidget(self.search, 4)
-        th.addStretch(1)
         self.btn_server = theme.button("", "cloud", "ghost", "Koneksi ke server LJK Reader Online", self._server)
-        self.btn_sync = theme.button("Sinkron", "cloud-download", tip="Tarik LJK yang dikirim admin daerah lewat HP",
-                                     slot=self.scan.sync)
         th.addWidget(self.btn_server)
-        th.addWidget(self.btn_sync)
+        # cari peserta ada di atas antrean Scan & nilai; pintasannya tetap berlaku dari mana saja
         for seq in ("Ctrl+K", "Ctrl+F"):
-            QShortcut(QKeySequence(seq), self, activated=lambda: (self.search.setFocus(), self.search.selectAll()))
+            QShortcut(QKeySequence(seq), self, activated=self._fokus_cari)
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_side)
 
         # ---- sidebar: daftar event di atas bingkai
         side = self.side = QWidget()
@@ -267,7 +265,7 @@ class MainWindow(QMainWindow):
         self.events.itemClicked.connect(lambda _it: (self._show_event_page(), self._close_side()))
         sv.addWidget(self.events, 1)
 
-        # ---- Menu: pustaka paket kunci (dipakai bersama banyak event) dan Nilai hasil (semua event)
+        # ---- Menu: Sinkron (event yang dibuka), pustaka paket kunci (dipakai bersama banyak event), Nilai hasil
         sv.addSpacing(10)
         sec2 = QHBoxLayout()
         sec2.setContentsMargins(8, 0, 0, 0)
@@ -280,15 +278,15 @@ class MainWindow(QMainWindow):
         self.nav = QListWidget()
         self.nav.setItemDelegate(EventDelegate(self.nav))
         self.nav.setMouseTracking(True)
-        self.nav.setFixedHeight(2 * 52 + 6)
+        self.nav.setFixedHeight(len(NAV) * 52 + 6)
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        for text, tip in (("Kunci jawaban\n", "Paket kunci jawaban: satu paket bisa dipakai banyak event"),
-                          ("Nilai hasil\n", "Nilai peserta per event dan mata pelajaran, cetak nilai, ekspor Excel")):
-            it = QListWidgetItem(text)
+        for key, tip in NAV:
+            it = QListWidgetItem("\n")
+            it.setData(Qt.UserRole, key)
             it.setToolTip(tip)
             self.nav.addItem(it)
-        self.nav.itemClicked.connect(lambda it: self._open_library() if self.nav.row(it) == 0 else self._open_nilai())
+        self.nav.itemClicked.connect(self._nav_clicked)
         sv.addWidget(self.nav)
         sv.addSpacing(6)
         folder = theme.button("Folder data", "folder", tip=str(data_dir),
@@ -317,9 +315,6 @@ class MainWindow(QMainWindow):
         head.addWidget(self.subtitle)
         head_row = QHBoxLayout()
         head_row.setSpacing(8)
-        self.btn_side = theme.button("", "panel-left", "icon", "Tampilkan daftar event", self._open_side)
-        self.btn_side.setVisible(False)
-        head_row.addWidget(self.btn_side, 0, Qt.AlignTop)
         head_row.addLayout(head, 1)
         for w in (self.scan.kontras, self.scan.btn_add, self.scan.btn_export):    # pengaturan & tindakan per event
             head_row.addWidget(w, 0, Qt.AlignTop)
@@ -381,6 +376,10 @@ class MainWindow(QMainWindow):
         self._theme_changed()
         self._loader = None
         self._sempit = False
+        # sidebar ditutup lewat tombol di kiri logo (jendela lebar): diingat saat aplikasi dibuka lagi
+        self._side_tutup = theme.setelan().value(SIDEBAR_TUTUP, False, type=bool)
+        self.side.setVisible(not self._side_tutup)
+        self._atur_tepi()
         self._update_nav()
         self._load_events()
         self.events.setFocus()                          # bukan kolom cari: fokus awal tidak menyorot apa pun
@@ -390,7 +389,6 @@ class MainWindow(QMainWindow):
         dark = theme.name() == "gelap"
         theme.set_icon(self.btn_theme, "sun" if dark else "moon")
         self.btn_theme.setText("Tema terang" if dark else "Tema gelap")
-        self._search_act.setIcon(icons.icon("search", theme.c("muted")))
         self._update_server_button()
         dpr = self.devicePixelRatioF() or 2.0
         logo = self._logo_pixmap(dpr)
@@ -473,7 +471,7 @@ class MainWindow(QMainWindow):
 
     def _running_changed(self, on):
         has = self.event_id is not None
-        self.btn_sync.setEnabled(not on and has)
+        self._update_sinkron()
         self.act_delete.setEnabled(not on and has)      # hapus event saat scan berjalan: hasil scan kehilangan tempat
 
     def _set_event(self, event_id):
@@ -488,7 +486,7 @@ class MainWindow(QMainWindow):
         self.act_delete.setEnabled(has and not self.scan.busy())
         for w in (self.scan.kontras, self.scan.btn_add, self.scan.btn_export):
             w.setVisible(has)
-        self.btn_sync.setEnabled(has and not self.scan.busy())
+        self._update_sinkron()
         self._update_header()
         self.latih.load(event_id)
         self.kunci.load(event_id)
@@ -561,20 +559,63 @@ class MainWindow(QMainWindow):
         self._update_server_button()
         self._sync_server_events()
 
-    # ---- menu Kunci jawaban (pustaka paket) <-> halaman event
+    # ---- menu sidebar: Sinkron, Kunci jawaban (pustaka paket), Nilai hasil <-> halaman event
+    def _nav_item(self, key):
+        return self.nav.item(next(i for i, (k, _tip) in enumerate(NAV) if k == key))
+
     def _update_nav(self):
         ps = list(self.db.pakets())
-        self.nav.item(0).setText(f"Kunci jawaban\n{len(ps)} paket" if ps else "Kunci jawaban\nbelum ada paket")
+        self._nav_item("kunci").setText(f"Kunci jawaban\n{len(ps)} paket" if ps else "Kunci jawaban\nbelum ada paket")
         n = len(self.db.events())
-        self.nav.item(1).setText(f"Nilai hasil\n{n} event")
+        self._nav_item("nilai").setText(f"Nilai hasil\n{n} event")
+        self._update_sinkron()
 
-    def _open_page(self, page, widget, nav_row):
+    def _update_sinkron(self):
+        """Menu Sinkron: keterangannya nama event yang akan disinkron; redup bila belum ada event yang dibuka atau
+        proses baca sedang berjalan (sama seperti tombol Sinkron dulu). Tidak pernah tersorot: ini tindakan, bukan
+        halaman."""
+        it = self._nav_item("sinkron")
+        ev = self.db.event(self.event_id) if self.event_id is not None else None
+        sibuk = self.scan.busy()
+        if ev is None:
+            ket = "pilih event dulu"
+        elif sibuk:
+            ket = "menunggu proses baca selesai"
+        else:
+            ket = ev["nama"]
+        it.setText(f"Sinkron\n{ket}")
+        it.setFlags(Qt.ItemIsEnabled if ev is not None and not sibuk else Qt.NoItemFlags)
+        it.setToolTip(NAV[0][1] + (f": {ev['nama']}" if ev is not None else ""))
+
+    def _nav_clicked(self, it):
+        if not it.flags() & Qt.ItemIsEnabled:
+            return
+        key = it.data(Qt.UserRole)
+        if key == "sinkron":
+            self._sinkron()
+        elif key == "kunci":
+            self._open_library()
+        else:
+            self._open_nilai()
+
+    def _sinkron(self):
+        """Menu Sinkron (fungsinya sama dengan tombol Sinkron dulu): laporkan lembar yang sudah dicek, lalu tarik
+        LJK kiriman HP untuk event yang sedang dibuka. Halaman Scan & nilai event itu ditampilkan supaya proses
+        bacanya terlihat."""
+        if self.event_id is None or self.scan.busy():
+            return
+        self._close_side()
+        self._show_event_page()
+        self.tabs.setCurrentWidget(self.scan)
+        self.scan.sync()
+
+    def _open_page(self, page, widget):
         """Buka halaman menu (pustaka kunci / Nilai hasil). Event yang sedang dibuka tetap terbuka di belakang;
         klik event di sidebar untuk kembali."""
         self._page = page
         self.stack.setCurrentWidget(widget)
         self.events.clearSelection()
-        self.nav.setCurrentRow(nav_row)
+        self.nav.setCurrentItem(self._nav_item(page))
         for w in (self.scan.kontras, self.scan.btn_add, self.scan.btn_export):
             w.setVisible(False)
         self._update_header()
@@ -582,12 +623,12 @@ class MainWindow(QMainWindow):
 
     def _open_library(self, paket_id=None):
         self.library.reload(select=paket_id)
-        self._open_page("kunci", self.library, 0)
+        self._open_page("kunci", self.library)
 
     def _open_nilai(self):
         self.nilai.reload(select=self.event_id)
         self._update_nav()
-        self._open_page("nilai", self.nilai, 1)
+        self._open_page("nilai", self.nilai)
 
     def _buka_lembar(self, event_id, lembar_id):
         """Dari Nilai hasil (klik dua kali peserta): buka event itu di tab Scan & nilai pada lembar tersebut."""
@@ -649,12 +690,14 @@ class MainWindow(QMainWindow):
             self.kunci.load(self.event_id)
             self.scan.refresh()
 
-    def _search_changed(self, text):
-        if text and self._page != "event" and self.event_id is not None:
-            self._show_event_page()
-        if text and self.tabs.currentWidget() is not self.scan:
-            self.tabs.setCurrentWidget(self.scan)
-        self.scan.set_query(text)
+    def _fokus_cari(self):
+        """Ctrl+K / Ctrl+F: kotak cari peserta di atas antrean Scan & nilai event yang sedang dibuka."""
+        if self.event_id is None:
+            return
+        self._close_side()
+        self._show_event_page()
+        self.tabs.setCurrentWidget(self.scan)
+        self.scan.fokus_cari()
 
     # ---- kompetisi server -> event desktop
     def _sync_server_events(self, manual=False):
@@ -783,18 +826,43 @@ class MainWindow(QMainWindow):
             if sempit:                                  # sidebar keluar dari susunan, jadi panel melayang
                 self._body_layout.removeWidget(self.side)
                 self.side.hide()
-            else:
+            else:                                       # kembali ke susunan, kecuali sedang ditutup lewat tombol
                 self._body_layout.insertWidget(0, self.side)
-                self.side.show()
+                self.side.setVisible(not self._side_tutup)
             self.side.setProperty("floating", sempit)
             theme.repolish(self.side)
-            self.btn_side.setVisible(sempit)
+            self._atur_tepi()
             for i, (text, pendek) in enumerate(TABS):
                 self.tabs.setTabText(i, pendek if sempit else text)
             for b in (self.scan.btn_add, self.scan.btn_export, self.btn_server):
                 b.set_compact(sempit)
         if sempit and self.side.isVisible():
             self.side.setGeometry(0, 0, SIDEBAR_W, self._body.height())
+
+    def _toggle_side(self):
+        """Tombol di kiri logo / Ctrl+B. Jendela lebar: sidebar ditutup (lembar melebar penuh) atau dibuka lagi,
+        diingat saat aplikasi dibuka lagi. Jendela sempit: panel melayang dibuka / ditutup."""
+        if self._sempit:
+            if self.side.isVisible():
+                self._close_side()
+            else:
+                self._open_side()
+            return
+        self._side_tutup = not self._side_tutup
+        self.side.setVisible(not self._side_tutup)
+        theme.setelan().setValue(SIDEBAR_TUTUP, self._side_tutup)
+        self._atur_tepi()
+
+    def _atur_tepi(self):
+        """Tanpa sidebar di kiri (ditutup / jendela sempit) lembar putih diberi jarak 8 px dari tepi kiri jendela,
+        sama seperti tepi kanan & bawah. Tooltip tombol sidebar ikut keadaannya."""
+        ada = not self._sempit and not self._side_tutup
+        self._body_layout.setContentsMargins(0 if ada else 8, 0, 8, 8)
+        if self._sempit:
+            tip = "Tampilkan daftar event & menu"
+        else:
+            tip = "Tampilkan sidebar" if self._side_tutup else "Sembunyikan sidebar (halaman jadi penuh)"
+        self.btn_side.setToolTip(f"{tip} (Ctrl+B)")
 
     def _open_side(self):
         """Panel daftar event melayang di atas isi (jendela sempit); tertutup saat event diklik atau klik di luar."""
@@ -810,8 +878,11 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.MouseButtonPress and self._sempit and self.side.isVisible():
-            p = self.side.mapFromGlobal(ev.globalPosition().toPoint())
-            if not self.side.rect().contains(p):
+            g = ev.globalPosition().toPoint()
+            luar = not self.side.rect().contains(self.side.mapFromGlobal(g))
+            # klik tombol sidebar: biar tombolnya yang menutup (kalau ditutup di sini, klik itu membukanya lagi)
+            tombol = self.btn_side.rect().contains(self.btn_side.mapFromGlobal(g))
+            if luar and not tombol:
                 self._close_side()
         return False
 

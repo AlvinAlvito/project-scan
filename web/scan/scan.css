@@ -82,6 +82,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .metrics { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions { display: grid; gap: 10px; }
 .actions .row > .btn { flex: 1; }
+/* aksi kecil di bawah tombol utama (mis. "Benar, ganti bidang"): tidak selebar tombol lain */
+.actions .btn.kecil { justify-self: center; min-height: 34px; padding: 6px 14px; font-size: 14px; color: var(--accent-text); }
 .form-card { display: grid; gap: 12px; }
 
 /* riwayat */
